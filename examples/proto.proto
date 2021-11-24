@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package proto;
+
+message Void {
+}
+
+message Query {
+    string sql = 1;
+}
+
+message QueryResults {
+    repeated QueryRow rows = 1;
+}
+
+message QueryRow {
+    repeated string values = 1;
+}
+
+message VoteRequest {
+    uint64 from_id = 1;
+    uint64 term = 2;
+    uint64 last_log_index = 3;
+    uint64 last_log_term = 4;
+}
+
+message VoteResponse {
+    uint64 from_id = 1;
+    uint64 term = 2;
+    bool vote_granted = 3;
+}
+
+message AppendEntriesRequest {
+    uint64 from_id = 1;
+    uint64 term = 2;
+    uint64 prev_log_index = 3;
+    uint64 prev_log_term = 4;
+    repeated LogEntry entries = 5;
+    uint64 commit_index = 6;
+}
+
+message LogEntry {
+    uint64 id = 1;
+    string sql = 2;
+    uint64 index = 3;
+    uint64 term = 4;
+}
+
+message AppendEntriesResponse {
+    uint64 from_id = 1;
+    uint64 term = 2;
+    bool success = 3;
+    uint64 last_index = 4;
+    optional uint64 mismatch_index = 5;
+}
+
+service RPC {
+    rpc Execute(Query) returns (QueryResults);
+    rpc Vote(VoteRequest) returns (Void);
+    rpc RespondToVote(VoteResponse) returns (Void);
+    rpc AppendEntries(AppendEntriesRequest) returns (Void);
+    rpc RespondToAppendEntries(AppendEntriesResponse) returns (Void);
+}
