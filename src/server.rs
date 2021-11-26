@@ -47,16 +47,16 @@ impl StateMachineTransition for StoreCommand {
     }
 }
 
-struct StoreStateMachine {
+struct Store {
     conn: Connection,
     pending_transitions: Vec<StoreCommand>,
     command_completions: HashMap<u64, Arc<Notify>>,
     results: HashMap<u64, Result<QueryResults, StoreError>>,
 }
 
-impl StoreStateMachine {
+impl Store {
     pub fn new(conn: Connection) -> Self {
-        StoreStateMachine {
+        Store {
             conn,
             pending_transitions: Vec::new(),
             command_completions: HashMap::new(),
@@ -78,7 +78,7 @@ impl StoreStateMachine {
     }
 }
 
-impl StateMachine<StoreCommand> for StoreStateMachine {
+impl StateMachine<StoreCommand> for Store {
     fn register_transition_state(&mut self, transition_id: usize, state: TransitionState) {
         if state == TransitionState::Applied {
             if let Some(completion) = self.command_completions.remove(&(transition_id as u64)) {
@@ -157,8 +157,8 @@ impl<T: StoreTransport> Cluster<StoreCommand> for StoreCluster<T> {
 pub struct StoreServer<T: StoreTransport> {
     next_cmd_id: AtomicU64,
     cluster: Arc<Mutex<StoreCluster<T>>>,
-    state_machine: Arc<Mutex<StoreStateMachine>>,
-    replica: Arc<Mutex<Replica<StoreStateMachine, StoreCommand, StoreCluster<T>>>>,
+    state_machine: Arc<Mutex<Store>>,
+    replica: Arc<Mutex<Replica<Store, StoreCommand, StoreCluster<T>>>>,
     message_notifier_rx: Receiver<()>,
     message_notifier_tx: Sender<()>,
     transition_notifier_rx: Receiver<()>,
@@ -188,7 +188,7 @@ impl<T: StoreTransport + Send + 'static> StoreServer<T> {
     /// Start a new server as part of a ChiselStore cluster.
     pub fn start(this_id: usize, peers: Vec<usize>, transport: T) -> Result<Self, StoreError> {
         let conn = sqlite::open(":memory:")?;
-        let state_machine = Arc::new(Mutex::new(StoreStateMachine::new(conn)));
+        let state_machine = Arc::new(Mutex::new(Store::new(conn)));
         let cluster = Arc::new(Mutex::new(StoreCluster::new(this_id, transport)));
         let noop = StoreCommand {
             id: NOP_TRANSITION_ID,
