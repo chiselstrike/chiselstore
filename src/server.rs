@@ -104,7 +104,9 @@ impl<T: StoreTransport> StateMachine<StoreCommand> for Store<T> {
             return;
         }
         let results = self.query(transition.sql);
-        self.results.insert(transition.id as u64, results);
+        if self.is_leader {
+            self.results.insert(transition.id as u64, results);
+        }
     }
 
     fn get_pending_transitions(&mut self) -> Vec<StoreCommand> {
