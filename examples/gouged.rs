@@ -1,6 +1,5 @@
 use anyhow::Result;
-use chiselstore::{Consistency, StoreCommand, StoreServer, StoreTransport};
-use little_raft::message::Message;
+use chiselstore::{rpc::RpcTransport, Consistency, StoreCommand, StoreServer};
 use std::sync::Arc;
 use structopt::StructOpt;
 use tonic::{transport::Server, Request, Response, Status};
@@ -9,11 +8,10 @@ pub mod proto {
     tonic::include_proto!("proto");
 }
 
-use proto::rpc_client::RpcClient;
 use proto::rpc_server::{Rpc, RpcServer};
 use proto::{
-    AppendEntriesRequest, AppendEntriesResponse, LogEntry, Query, QueryResults, QueryRow, Void,
-    VoteRequest, VoteResponse,
+    AppendEntriesRequest, AppendEntriesResponse, Query, QueryResults, QueryRow, Void, VoteRequest,
+    VoteResponse,
 };
 
 #[derive(StructOpt, Debug)]
@@ -25,132 +23,6 @@ struct Opt {
     /// The IDs of peers.
     #[structopt(short, long, required = false)]
     peers: Vec<usize>,
-}
-
-struct RpcTransport {}
-
-impl StoreTransport for RpcTransport {
-    fn send(&self, to_id: usize, msg: Message<StoreCommand>) {
-        match msg {
-            Message::AppendEntryRequest {
-                from_id,
-                term,
-                prev_log_index,
-                prev_log_term,
-                entries,
-                commit_index,
-            } => {
-                let from_id = from_id as u64;
-                let term = term as u64;
-                let prev_log_index = prev_log_index as u64;
-                let prev_log_term = prev_log_term as u64;
-                let entries = entries
-                    .iter()
-                    .map(|entry| {
-                        let id = entry.transition.id as u64;
-                        let index = entry.index as u64;
-                        let sql = entry.transition.sql.clone();
-                        let term = entry.term as u64;
-                        LogEntry {
-                            id,
-                            sql,
-                            index,
-                            term,
-                        }
-                    })
-                    .collect();
-                let commit_index = commit_index as u64;
-                let request = AppendEntriesRequest {
-                    from_id,
-                    term,
-                    prev_log_index,
-                    prev_log_term,
-                    entries,
-                    commit_index,
-                };
-                let peer = node_addr(to_id);
-                tokio::task::spawn(async move {
-                    let request = request.clone();
-                    if let Ok(mut client) = RpcClient::connect(peer.to_string()).await {
-                        let request = tonic::Request::new(request.clone());
-                        client.append_entries(request).await.unwrap();
-                    }
-                });
-            }
-            Message::AppendEntryResponse {
-                from_id,
-                term,
-                success,
-                last_index,
-                mismatch_index,
-            } => {
-                let from_id = from_id as u64;
-                let term = term as u64;
-                let last_index = last_index as u64;
-                let mismatch_index = mismatch_index.map(|idx| idx as u64);
-                let request = AppendEntriesResponse {
-                    from_id,
-                    term,
-                    success,
-                    last_index,
-                    mismatch_index,
-                };
-                let peer = node_addr(to_id);
-                tokio::task::spawn(async move {
-                    let request = request.clone();
-                    if let Ok(mut client) = RpcClient::connect(peer.to_string()).await {
-                        let request = tonic::Request::new(request.clone());
-                        client.respond_to_append_entries(request).await.unwrap();
-                    }
-                });
-            }
-            Message::VoteRequest {
-                from_id,
-                term,
-                last_log_index,
-                last_log_term,
-            } => {
-                let from_id = from_id as u64;
-                let term = term as u64;
-                let last_log_index = last_log_index as u64;
-                let last_log_term = last_log_term as u64;
-                let request = VoteRequest {
-                    from_id,
-                    term,
-                    last_log_index,
-                    last_log_term,
-                };
-                let peer = node_addr(to_id);
-                tokio::task::spawn(async move {
-                    let request = request.clone();
-                    if let Ok(mut client) = RpcClient::connect(peer.to_string()).await {
-                        let vote = tonic::Request::new(request.clone());
-                        client.vote(vote).await.unwrap();
-                    }
-                });
-            }
-            Message::VoteResponse {
-                from_id,
-                term,
-                vote_granted,
-            } => {
-                let peer = node_addr(to_id);
-                tokio::task::spawn(async move {
-                    let from_id = from_id as u64;
-                    let term = term as u64;
-                    let response = VoteResponse {
-                        from_id,
-                        term,
-                        vote_granted,
-                    };
-                    if let Ok(mut client) = RpcClient::connect(peer.to_string()).await {
-                        let response = tonic::Request::new(response.clone());
-                        client.respond_to_vote(response).await.unwrap();
-                    }
-                });
-            }
-        }
-    }
 }
 
 /// Node address in cluster.
@@ -288,7 +160,7 @@ async fn main() -> Result<()> {
     let opt = Opt::from_args();
     let port = 50000 + opt.id;
     let addr = format!("127.0.0.1:{}", port).parse().unwrap();
-    let transport = RpcTransport {};
+    let transport = RpcTransport::new(Box::new(node_addr));
     let server = StoreServer::start(opt.id, opt.peers, transport)?;
     let server = Arc::new(server);
     let f = {
