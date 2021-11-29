@@ -27,9 +27,9 @@ struct Opt {
     peers: Vec<usize>,
 }
 
-struct Transport {}
+struct RpcTransport {}
 
-impl StoreTransport for Transport {
+impl StoreTransport for RpcTransport {
     fn send(&self, to_id: usize, msg: Message<StoreCommand>) {
         match msg {
             Message::AppendEntryRequest {
@@ -160,11 +160,11 @@ fn node_addr(id: usize) -> String {
 }
 
 pub struct RpcService {
-    server: Arc<StoreServer<Transport>>,
+    server: Arc<StoreServer<RpcTransport>>,
 }
 
 impl RpcService {
-    fn new(server: Arc<StoreServer<Transport>>) -> Self {
+    fn new(server: Arc<StoreServer<RpcTransport>>) -> Self {
         Self { server }
     }
 }
@@ -288,7 +288,7 @@ async fn main() -> Result<()> {
     let opt = Opt::from_args();
     let port = 50000 + opt.id;
     let addr = format!("127.0.0.1:{}", port).parse().unwrap();
-    let transport = Transport {};
+    let transport = RpcTransport {};
     let server = StoreServer::start(opt.id, opt.peers, transport)?;
     let server = Arc::new(server);
     let f = {
