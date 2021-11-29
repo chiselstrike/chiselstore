@@ -47,16 +47,28 @@ impl StateMachineTransition for StoreCommand {
     }
 }
 
-struct StoreStateMachine {
+struct Store<T: StoreTransport> {
+    /// ID of the node this Cluster objecti s on.
+    this_id: usize,
+    /// Is this node the leader?
+    is_leader: bool,
+    /// Pending messages
+    pending_messages: Vec<Message<StoreCommand>>,
+    /// Transport layer.
+    transport: T,
     conn: Connection,
     pending_transitions: Vec<StoreCommand>,
     command_completions: HashMap<u64, Arc<Notify>>,
     results: HashMap<u64, Result<QueryResults, StoreError>>,
 }
 
-impl StoreStateMachine {
-    pub fn new(conn: Connection) -> Self {
-        StoreStateMachine {
+impl<T: StoreTransport> Store<T> {
+    pub fn new(this_id: usize, transport: T, conn: Connection) -> Self {
+        Store {
+            this_id,
+            is_leader: false,
+            pending_messages: Vec::new(),
+            transport,
             conn,
             pending_transitions: Vec::new(),
             command_completions: HashMap::new(),
@@ -78,7 +90,7 @@ impl StoreStateMachine {
     }
 }
 
-impl StateMachine<StoreCommand> for StoreStateMachine {
+impl<T: StoreTransport> StateMachine<StoreCommand> for Store<T> {
     fn register_transition_state(&mut self, transition_id: usize, state: TransitionState) {
         if state == TransitionState::Applied {
             if let Some(completion) = self.command_completions.remove(&(transition_id as u64)) {
@@ -92,7 +104,9 @@ impl StateMachine<StoreCommand> for StoreStateMachine {
             return;
         }
         let results = self.query(transition.sql);
-        self.results.insert(transition.id as u64, results);
+        if self.is_leader {
+            self.results.insert(transition.id as u64, results);
+        }
     }
 
     fn get_pending_transitions(&mut self) -> Vec<StoreCommand> {
@@ -102,29 +116,7 @@ impl StateMachine<StoreCommand> for StoreStateMachine {
     }
 }
 
-pub struct StoreCluster<T: StoreTransport> {
-    /// ID of the node this Cluster objecti s on.
-    this_id: usize,
-    /// Is this node the leader?
-    is_leader: bool,
-    /// Pending messages
-    pending_messages: Vec<Message<StoreCommand>>,
-    /// Transport layer.
-    transport: T,
-}
-
-impl<T: StoreTransport> StoreCluster<T> {
-    pub fn new(this_id: usize, transport: T) -> Self {
-        StoreCluster {
-            this_id,
-            is_leader: false,
-            pending_messages: Vec::new(),
-            transport,
-        }
-    }
-}
-
-impl<T: StoreTransport> Cluster<StoreCommand> for StoreCluster<T> {
+impl<T: StoreTransport> Cluster<StoreCommand> for Store<T> {
     fn register_leader(&mut self, leader_id: Option<ReplicaID>) {
         if let Some(id) = leader_id {
             println!("{} is the leader.", id);
@@ -153,12 +145,13 @@ impl<T: StoreTransport> Cluster<StoreCommand> for StoreCluster<T> {
     }
 }
 
+type StoreReplica<T> = Replica<Store<T>, StoreCommand, Store<T>>;
+
 /// ChiselStore server.
 pub struct StoreServer<T: StoreTransport> {
     next_cmd_id: AtomicU64,
-    cluster: Arc<Mutex<StoreCluster<T>>>,
-    state_machine: Arc<Mutex<StoreStateMachine>>,
-    replica: Arc<Mutex<Replica<StoreStateMachine, StoreCommand, StoreCluster<T>>>>,
+    store: Arc<Mutex<Store<T>>>,
+    replica: Arc<Mutex<StoreReplica<T>>>,
     message_notifier_rx: Receiver<()>,
     message_notifier_tx: Sender<()>,
     transition_notifier_rx: Receiver<()>,
@@ -188,21 +181,18 @@ impl<T: StoreTransport + Send + 'static> StoreServer<T> {
     /// Start a new server as part of a ChiselStore cluster.
     pub fn start(this_id: usize, peers: Vec<usize>, transport: T) -> Result<Self, StoreError> {
         let conn = sqlite::open(":memory:")?;
-        let state_machine = Arc::new(Mutex::new(StoreStateMachine::new(conn)));
-        let cluster = Arc::new(Mutex::new(StoreCluster::new(this_id, transport)));
+        let store = Arc::new(Mutex::new(Store::new(this_id, transport, conn)));
         let noop = StoreCommand {
             id: NOP_TRANSITION_ID,
             sql: "".to_string(),
         };
         let (message_notifier_tx, message_notifier_rx) = channel::unbounded();
         let (transition_notifier_tx, transition_notifier_rx) = channel::unbounded();
-        let clusterx = cluster.clone();
-        let state_machinex = state_machine.clone();
         let replica = Replica::new(
             this_id,
             peers,
-            clusterx,
-            state_machinex,
+            store.clone(),
+            store.clone(),
             noop,
             HEARTBEAT_TIMEOUT,
             (MIN_ELECTION_TIMEOUT, MAX_ELECTION_TIMEOUT),
@@ -210,8 +200,7 @@ impl<T: StoreTransport + Send + 'static> StoreServer<T> {
         let replica = Arc::new(Mutex::new(replica));
         Ok(StoreServer {
             next_cmd_id: AtomicU64::new(1), // zero is reserved for no-op.
-            cluster,
-            state_machine,
+            store,
             replica,
             message_notifier_rx,
             message_notifier_tx,
@@ -238,7 +227,7 @@ impl<T: StoreTransport + Send + 'static> StoreServer<T> {
             Consistency::Strong => {
                 // FIXME: check that we are the leader, if not, delegate.
                 let id = self.next_cmd_id.fetch_add(1, Ordering::SeqCst);
-                self.state_machine
+                self.store
                     .lock()
                     .unwrap()
                     .pending_transitions
@@ -247,25 +236,19 @@ impl<T: StoreTransport + Send + 'static> StoreServer<T> {
                         sql: stmt.as_ref().to_string(),
                     });
                 let notify = Arc::new(Notify::new());
-                self.state_machine
+                self.store
                     .lock()
                     .unwrap()
                     .command_completions
                     .insert(id, notify.clone());
                 self.transition_notifier_tx.send(()).unwrap();
                 notify.notified().await;
-                let results = self
-                    .state_machine
-                    .lock()
-                    .unwrap()
-                    .results
-                    .remove(&id)
-                    .unwrap();
+                let results = self.store.lock().unwrap().results.remove(&id).unwrap();
                 results?
             }
             Consistency::RelaxedReads => {
                 // FIXME: ensure that `stmt` is a read!
-                let state_machine = self.state_machine.lock().unwrap();
+                let state_machine = self.store.lock().unwrap();
                 state_machine.query(stmt.as_ref().to_string())?
             }
         };
@@ -274,7 +257,7 @@ impl<T: StoreTransport + Send + 'static> StoreServer<T> {
 
     /// Receive a message from the ChiselStore cluster.
     pub fn recv_msg(&self, msg: little_raft::message::Message<StoreCommand>) {
-        let mut cluster = self.cluster.lock().unwrap();
+        let mut cluster = self.store.lock().unwrap();
         cluster.pending_messages.push(msg);
         self.message_notifier_tx.send(()).unwrap();
     }
