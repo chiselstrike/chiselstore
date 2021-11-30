@@ -19,32 +19,39 @@ struct Opt {
     peers: Vec<usize>,
 }
 
-/// Node address in cluster.
-fn node_addr(id: usize) -> String {
-    let port = 50000 + id;
-    format!("http://127.0.0.1:{}", port)
+/// Node authority (host and port) in the cluster.
+fn node_authority(id: usize) -> (&'static str, u16) {
+    let host = "127.0.0.1";
+    let port = 50000 + (id as u16);
+    (host, port)
+}
+
+/// Node RPC address in cluster.
+fn node_rpc_addr(id: usize) -> String {
+    let (host, port) = node_authority(id);
+    format!("http://{}:{}", host, port)
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let opt = Opt::from_args();
-    let port = 50000 + opt.id;
-    let addr = format!("127.0.0.1:{}", port).parse().unwrap();
-    let transport = RpcTransport::new(Box::new(node_addr));
+    let (host, port) = node_authority(opt.id);
+    let rpc_listen_addr = format!("{}:{}", host, port).parse().unwrap();
+    let transport = RpcTransport::new(Box::new(node_rpc_addr));
     let server = StoreServer::start(opt.id, opt.peers, transport)?;
     let server = Arc::new(server);
     let f = {
         let server = server.clone();
         tokio::task::spawn(async move {
-            server.start_blocking();
+            server.run();
         })
     };
     let rpc = RpcService::new(server);
     let g = tokio::task::spawn(async move {
-        println!("RPC listening to {} ...", addr);
+        println!("RPC listening to {} ...", rpc_listen_addr);
         let ret = Server::builder()
             .add_service(RpcServer::new(rpc))
-            .serve(addr)
+            .serve(rpc_listen_addr)
             .await;
         ret
     });
