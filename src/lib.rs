@@ -1,4 +1,5 @@
 pub mod errors;
+pub mod rpc;
 pub mod server;
 
 pub use errors::StoreError;
