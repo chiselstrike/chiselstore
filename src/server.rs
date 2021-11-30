@@ -210,7 +210,7 @@ impl<T: StoreTransport + Send + 'static> StoreServer<T> {
     }
 
     /// Run the blocking event loop.
-    pub fn start_blocking(&self) {
+    pub fn run(&self) {
         self.replica.lock().unwrap().start(
             self.message_notifier_rx.clone(),
             self.transition_notifier_rx.clone(),

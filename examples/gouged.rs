@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
     let f = {
         let server = server.clone();
         tokio::task::spawn(async move {
-            server.start_blocking();
+            server.run();
         })
     };
     let rpc = RpcService::new(server);
