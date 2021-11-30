@@ -6,7 +6,7 @@ pub mod proto {
 }
 
 use proto::rpc_client::RpcClient;
-use proto::Query;
+use proto::{Consistency, Query};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -20,6 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut client = RpcClient::connect(addr).await?;
         let query = tonic::Request::new(Query {
             sql: line.to_string(),
+            consistency: Consistency::RelaxedReads as i32,
         });
         let response = client.execute(query).await?;
         let response = response.into_inner();

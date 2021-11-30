@@ -5,8 +5,14 @@ package proto;
 message Void {
 }
 
+enum Consistency {
+    STRONG = 0;
+    RELAXED_READS = 1;
+}
+
 message Query {
     string sql = 1;
+    Consistency consistency = 2;
 }
 
 message QueryResults {
