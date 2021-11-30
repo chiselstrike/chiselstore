@@ -1,3 +1,5 @@
+//! ChiselStore RPC module.
+
 use little_raft::message::Message;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
@@ -5,6 +7,7 @@ use tonic::{Request, Response, Status};
 use crate::rpc::proto::rpc_server::Rpc;
 use crate::{Consistency, StoreCommand, StoreServer, StoreTransport};
 
+#[allow(missing_docs)]
 pub mod proto {
     tonic::include_proto!("proto");
 }
@@ -17,11 +20,14 @@ use proto::{
 
 type NodeAddrFn = dyn Fn(usize) -> String + Send;
 
+/// RPC transport.
 pub struct RpcTransport {
+    /// Node address mapping function.
     node_addr: Box<NodeAddrFn>,
 }
 
 impl RpcTransport {
+    /// Creates a new RPC transport.
     pub fn new(node_addr: Box<NodeAddrFn>) -> Self {
         RpcTransport { node_addr }
     }
@@ -151,11 +157,14 @@ impl StoreTransport for RpcTransport {
     }
 }
 
+/// RPC service.
 pub struct RpcService {
+    /// The ChiselStore server access via this RPC service.
     pub server: Arc<StoreServer<RpcTransport>>,
 }
 
 impl RpcService {
+    /// Creates a new RPC service.
     pub fn new(server: Arc<StoreServer<RpcTransport>>) -> Self {
         Self { server }
     }

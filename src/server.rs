@@ -1,3 +1,5 @@
+//! ChiselStore server module.
+
 use crate::errors::StoreError;
 use async_notify::Notify;
 use crossbeam_channel as channel;
@@ -20,6 +22,7 @@ use std::time::Duration;
 /// Your application should implement this trait to provide network access
 /// to the ChiselStore server.
 pub trait StoreTransport {
+    /// Send a store command message `msg` to `to_id` node.
     fn send(&self, to_id: usize, msg: Message<StoreCommand>);
 }
 
@@ -33,9 +36,14 @@ pub enum Consistency {
     RelaxedReads,
 }
 
+/// Store command.
+///
+/// A store command is a SQL statement that is replicated in the Raft cluster.
 #[derive(Clone, Debug)]
 pub struct StoreCommand {
+    /// Unique ID of this command.
     pub id: usize,
+    /// The SQL statement of this command.
     pub sql: String,
 }
 
@@ -158,7 +166,9 @@ pub struct StoreServer<T: StoreTransport> {
     transition_notifier_tx: Sender<()>,
 }
 
+/// Query row.
 pub struct QueryRow {
+    /// Column values of the row.
     pub values: Vec<String>,
 }
 
@@ -168,7 +178,9 @@ impl QueryRow {
     }
 }
 
+/// Query results.
 pub struct QueryResults {
+    /// Query result rows.
     pub rows: Vec<QueryRow>,
 }
 
