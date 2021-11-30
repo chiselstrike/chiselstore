@@ -8,6 +8,9 @@ pub enum StoreError {
     /// SQLite error.
     #[error("SQLite error: {0}")]
     SQLiteError(sqlite::Error),
+    /// This node is not a leader and cannot therefore execute the command.
+    #[error("Node is not a leader")]
+    NotLeader,
 }
 
 impl From<sqlite::Error> for StoreError {

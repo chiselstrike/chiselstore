@@ -247,7 +247,10 @@ impl<T: StoreTransport + Send + 'static> StoreServer<T> {
     ) -> Result<QueryResults, StoreError> {
         let results = match consistency {
             Consistency::Strong => {
-                // FIXME: check that we are the leader, if not, delegate.
+                if !self.store.lock().unwrap().is_leader {
+                    // FIXME: delegate to leader if possible.
+                    return Err(StoreError::NotLeader);
+                }
                 let id = self.next_cmd_id.fetch_add(1, Ordering::SeqCst);
                 self.store
                     .lock()
