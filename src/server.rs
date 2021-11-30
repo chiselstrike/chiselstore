@@ -245,9 +245,20 @@ impl<T: StoreTransport + Send + 'static> StoreServer<T> {
         stmt: S,
         consistency: Consistency,
     ) -> Result<QueryResults, StoreError> {
+        // If the statement is a read statement, let's use whatever
+        // consistency the user provided; otherwise fall back to strong
+        // consistency.
+        let consistency = if is_read_statement(stmt.as_ref()) {
+            consistency
+        } else {
+            Consistency::Strong
+        };
         let results = match consistency {
             Consistency::Strong => {
-                // FIXME: check that we are the leader, if not, delegate.
+                if !self.store.lock().unwrap().is_leader {
+                    // FIXME: delegate to leader if possible.
+                    return Err(StoreError::NotLeader);
+                }
                 let id = self.next_cmd_id.fetch_add(1, Ordering::SeqCst);
                 self.store
                     .lock()
@@ -269,7 +280,6 @@ impl<T: StoreTransport + Send + 'static> StoreServer<T> {
                 results?
             }
             Consistency::RelaxedReads => {
-                // FIXME: ensure that `stmt` is a read!
                 let state_machine = self.store.lock().unwrap();
                 state_machine.query(stmt.as_ref().to_string())?
             }
@@ -283,4 +293,8 @@ impl<T: StoreTransport + Send + 'static> StoreServer<T> {
         cluster.pending_messages.push(msg);
         self.message_notifier_tx.send(()).unwrap();
     }
+}
+
+fn is_read_statement(stmt: &str) -> bool {
+    stmt.to_lowercase().starts_with("select")
 }

@@ -183,7 +183,13 @@ impl Rpc for RpcService {
     ) -> Result<Response<QueryResults>, tonic::Status> {
         let query = request.into_inner();
         let server = self.server.clone();
-        let results = match server.query(query.sql, Consistency::Strong).await {
+        let consistency =
+            proto::Consistency::from_i32(query.consistency).unwrap_or(proto::Consistency::Strong);
+        let consistency = match consistency {
+            proto::Consistency::Strong => Consistency::Strong,
+            proto::Consistency::RelaxedReads => Consistency::RelaxedReads,
+        };
+        let results = match server.query(query.sql, consistency).await {
             Ok(results) => results,
             Err(e) => return Err(Status::internal(format!("{}", e))),
         };
