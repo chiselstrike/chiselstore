@@ -91,6 +91,8 @@
 //! [1]: https://www.sqlite.org/index.html
 //! [2]: https://github.com/andreev-io/little-raft
 
+#![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
+
 pub mod errors;
 pub mod rpc;
 pub mod server;
