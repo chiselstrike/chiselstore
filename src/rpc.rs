@@ -1,5 +1,6 @@
 //! ChiselStore RPC module.
 
+use derivative::Derivative;
 use little_raft::message::Message;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
@@ -21,8 +22,11 @@ use proto::{
 type NodeAddrFn = dyn Fn(usize) -> String + Send;
 
 /// RPC transport.
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct RpcTransport {
     /// Node address mapping function.
+    #[derivative(Debug = "ignore")]
     node_addr: Box<NodeAddrFn>,
 }
 
@@ -158,6 +162,7 @@ impl StoreTransport for RpcTransport {
 }
 
 /// RPC service.
+#[derive(Debug)]
 pub struct RpcService {
     /// The ChiselStore server access via this RPC service.
     pub server: Arc<StoreServer<RpcTransport>>,

@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 async-notify = "0.2.0"
 crossbeam-channel = "0.5.1"
+derivative = "2.2.0"
 little_raft = "0.1.4"
 prost = "0.8.0"
 sqlite = "0.26.0"

@@ -4,6 +4,7 @@ use crate::errors::StoreError;
 use async_notify::Notify;
 use crossbeam_channel as channel;
 use crossbeam_channel::{Receiver, Sender};
+use derivative::Derivative;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -27,6 +28,7 @@ pub trait StoreTransport {
 }
 
 /// Consistency mode.
+#[derive(Debug)]
 pub enum Consistency {
     /// Strong consistency. Both reads and writes go through the Raft leader,
     /// which makes them linearizable.
@@ -55,6 +57,8 @@ impl StateMachineTransition for StoreCommand {
     }
 }
 
+#[derive(Derivative)]
+#[derivative(Debug)]
 struct Store<T: StoreTransport> {
     /// ID of the node this Cluster objecti s on.
     this_id: usize,
@@ -64,6 +68,7 @@ struct Store<T: StoreTransport> {
     pending_messages: Vec<Message<StoreCommand>>,
     /// Transport layer.
     transport: T,
+    #[derivative(Debug = "ignore")]
     conn: Connection,
     pending_transitions: Vec<StoreCommand>,
     command_completions: HashMap<u64, Arc<Notify>>,
@@ -156,9 +161,12 @@ impl<T: StoreTransport> Cluster<StoreCommand> for Store<T> {
 type StoreReplica<T> = Replica<Store<T>, StoreCommand, Store<T>>;
 
 /// ChiselStore server.
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct StoreServer<T: StoreTransport> {
     next_cmd_id: AtomicU64,
     store: Arc<Mutex<Store<T>>>,
+    #[derivative(Debug = "ignore")]
     replica: Arc<Mutex<StoreReplica<T>>>,
     message_notifier_rx: Receiver<()>,
     message_notifier_tx: Sender<()>,
@@ -167,6 +175,7 @@ pub struct StoreServer<T: StoreTransport> {
 }
 
 /// Query row.
+#[derive(Debug)]
 pub struct QueryRow {
     /// Column values of the row.
     pub values: Vec<String>,
@@ -179,6 +188,7 @@ impl QueryRow {
 }
 
 /// Query results.
+#[derive(Debug)]
 pub struct QueryResults {
     /// Query result rows.
     pub rows: Vec<QueryRow>,
