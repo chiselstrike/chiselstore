@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
     let server = Arc::new(server);
     let f = {
         let server = server.clone();
-        tokio::task::spawn(async move {
+        tokio::task::spawn_blocking(move || {
             server.run();
         })
     };
