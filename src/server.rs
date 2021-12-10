@@ -260,20 +260,15 @@ impl<T: StoreTransport + Send + 'static> StoreServer<T> {
                     return Err(StoreError::NotLeader);
                 }
                 let id = self.next_cmd_id.fetch_add(1, Ordering::SeqCst);
-                self.store
-                    .lock()
-                    .unwrap()
-                    .pending_transitions
-                    .push(StoreCommand {
+                let notify = Arc::new(Notify::new());
+                {
+                    let mut store = self.store.lock().unwrap();
+                    store.command_completions.insert(id, notify.clone());
+                    store.pending_transitions.push(StoreCommand {
                         id: id as usize,
                         sql: stmt.as_ref().to_string(),
                     });
-                let notify = Arc::new(Notify::new());
-                self.store
-                    .lock()
-                    .unwrap()
-                    .command_completions
-                    .insert(id, notify.clone());
+                }
                 self.transition_notifier_tx.send(()).unwrap();
                 notify.notified().await;
                 let results = self.store.lock().unwrap().results.remove(&id).unwrap();
