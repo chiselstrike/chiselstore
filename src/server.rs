@@ -12,7 +12,7 @@ use little_raft::{
     replica::{Replica, ReplicaID},
     state_machine::{StateMachine, StateMachineTransition, TransitionState},
 };
-use sqlite::Connection;
+use sqlite::{Connection, OpenFlags};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -66,6 +66,13 @@ impl StateMachineTransition for StoreCommand {
     }
 }
 
+/// Store configuration.
+#[derive(Debug)]
+struct StoreConfig {
+    /// Connection pool size.
+    conn_pool_size: usize,
+}
+
 #[derive(Derivative)]
 #[derivative(Debug)]
 struct Store<T: StoreTransport + Send + Sync> {
@@ -80,14 +87,27 @@ struct Store<T: StoreTransport + Send + Sync> {
     /// Transport layer.
     transport: Arc<T>,
     #[derivative(Debug = "ignore")]
-    conn: Connection,
+    conn_pool: Vec<Arc<Mutex<Connection>>>,
+    conn_idx: usize,
     pending_transitions: Vec<StoreCommand>,
     command_completions: HashMap<u64, Arc<Notify>>,
     results: HashMap<u64, Result<QueryResults, StoreError>>,
 }
 
 impl<T: StoreTransport + Send + Sync> Store<T> {
-    pub fn new(this_id: usize, transport: T, conn: Connection) -> Self {
+    pub fn new(this_id: usize, transport: T, config: StoreConfig) -> Self {
+        let mut conn_pool = vec![];
+        let conn_pool_size = config.conn_pool_size;
+        for _ in 0..conn_pool_size {
+            // FIXME: Let's use the 'memdb' VFS of SQLite, which allows concurrent threads
+            // accessing the same in-memory database.
+            let flags = OpenFlags::new().set_read_write().set_create().set_no_mutex();
+            let mut conn =
+                Connection::open_with_flags(format!("node{}.db", this_id), flags).unwrap();
+            conn.set_busy_timeout(5000).unwrap();
+            conn_pool.push(Arc::new(Mutex::new(conn)));
+        }
+        let conn_idx = 0;
         Store {
             this_id,
             leader: None,
@@ -95,7 +115,8 @@ impl<T: StoreTransport + Send + Sync> Store<T> {
             waiters: Vec::new(),
             pending_messages: Vec::new(),
             transport: Arc::new(transport),
-            conn,
+            conn_pool,
+            conn_idx,
             pending_transitions: Vec::new(),
             command_completions: HashMap::new(),
             results: HashMap::new(),
@@ -109,18 +130,26 @@ impl<T: StoreTransport + Send + Sync> Store<T> {
         }
     }
 
-    pub fn query(&self, sql: String) -> Result<QueryResults, StoreError> {
-        let mut rows = vec![];
-        self.conn.iterate(sql, |pairs| {
-            let mut row = QueryRow::new();
-            for &(_, value) in pairs.iter() {
-                row.values.push(value.unwrap().to_string());
-            }
-            rows.push(row);
-            true
-        })?;
-        Ok(QueryResults { rows })
+    pub fn get_connection(&mut self) -> Arc<Mutex<Connection>> {
+        let idx = self.conn_idx % self.conn_pool.len();
+        let conn = &self.conn_pool[idx];
+        self.conn_idx += 1;
+        conn.clone()
     }
+}
+
+fn query(conn: Arc<Mutex<Connection>>, sql: String) -> Result<QueryResults, StoreError> {
+    let conn = conn.lock().unwrap();
+    let mut rows = vec![];
+    conn.iterate(sql, |pairs| {
+        let mut row = QueryRow::new();
+        for &(_, value) in pairs.iter() {
+            row.values.push(value.unwrap().to_string());
+        }
+        rows.push(row);
+        true
+    })?;
+    Ok(QueryResults { rows })
 }
 
 impl<T: StoreTransport + Send + Sync> StateMachine<StoreCommand> for Store<T> {
@@ -136,7 +165,8 @@ impl<T: StoreTransport + Send + Sync> StateMachine<StoreCommand> for Store<T> {
         if transition.id == NOP_TRANSITION_ID {
             return;
         }
-        let results = self.query(transition.sql);
+        let conn = self.get_connection();
+        let results = query(conn, transition.sql);
         if self.is_leader() {
             self.results.insert(transition.id as u64, results);
         }
@@ -225,8 +255,8 @@ const MAX_ELECTION_TIMEOUT: Duration = Duration::from_millis(950);
 impl<T: StoreTransport + Send + Sync> StoreServer<T> {
     /// Start a new server as part of a ChiselStore cluster.
     pub fn start(this_id: usize, peers: Vec<usize>, transport: T) -> Result<Self, StoreError> {
-        let conn = sqlite::open(":memory:")?;
-        let store = Arc::new(Mutex::new(Store::new(this_id, transport, conn)));
+        let config = StoreConfig { conn_pool_size: 20 };
+        let store = Arc::new(Mutex::new(Store::new(this_id, transport, config)));
         let noop = StoreCommand {
             id: NOP_TRANSITION_ID,
             sql: "".to_string(),
@@ -309,8 +339,11 @@ impl<T: StoreTransport + Send + Sync> StoreServer<T> {
                 results?
             }
             Consistency::RelaxedReads => {
-                let state_machine = self.store.lock().unwrap();
-                state_machine.query(stmt.as_ref().to_string())?
+                let conn = {
+                    let mut store = self.store.lock().unwrap();
+                    store.get_connection()
+                };
+                query(conn, stmt.as_ref().to_string())?
             }
         };
         Ok(results)
