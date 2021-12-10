@@ -6,7 +6,7 @@ use crossbeam_channel as channel;
 use crossbeam_channel::{Receiver, Sender};
 use derivative::Derivative;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use little_raft::{
     cluster::Cluster,
@@ -64,6 +64,8 @@ struct Store<T: StoreTransport> {
     this_id: usize,
     /// Is this node the leader?
     is_leader: bool,
+    leader_exists: AtomicBool,
+    waiters: Vec<Arc<Notify>>,
     /// Pending messages
     pending_messages: Vec<Message<StoreCommand>>,
     /// Transport layer.
@@ -80,6 +82,8 @@ impl<T: StoreTransport> Store<T> {
         Store {
             this_id,
             is_leader: false,
+            leader_exists: AtomicBool::new(false),
+            waiters: Vec::new(),
             pending_messages: Vec::new(),
             transport,
             conn,
@@ -138,8 +142,15 @@ impl<T: StoreTransport> Cluster<StoreCommand> for Store<T> {
             } else {
                 self.is_leader = false;
             }
+            self.leader_exists.store(true, Ordering::SeqCst);
         } else {
             self.is_leader = false;
+            self.leader_exists.store(false, Ordering::SeqCst);
+        }
+        let waiters = self.waiters.clone();
+        self.waiters = Vec::new();
+        for waiter in waiters {
+            waiter.notify();
         }
     }
 
@@ -245,6 +256,22 @@ impl<T: StoreTransport + Send + 'static> StoreServer<T> {
         stmt: S,
         consistency: Consistency,
     ) -> Result<QueryResults, StoreError> {
+        loop {
+            let notify = {
+                let mut store = self.store.lock().unwrap();
+                if store.leader_exists.load(Ordering::SeqCst) {
+                    break;
+                }
+                let notify = Arc::new(Notify::new());
+                store.waiters.push(notify.clone());
+                notify
+            };
+            if self.store.lock().unwrap().leader_exists.load(Ordering::SeqCst) {
+                break;
+            }
+            // TODO: add a timeout and fail if necessary
+            notify.notified().await;
+        }
         // If the statement is a read statement, let's use whatever
         // consistency the user provided; otherwise fall back to strong
         // consistency.
