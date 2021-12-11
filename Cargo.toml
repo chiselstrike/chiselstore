@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 async-notify = "0.2.0"
+async-trait = "0.1.52"
 crossbeam-channel = "0.5.1"
 derivative = "2.2.0"
 little_raft = "0.1.6"

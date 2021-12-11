@@ -1,12 +1,12 @@
 //! ChiselStore RPC module.
 
+use crate::rpc::proto::rpc_server::Rpc;
+use crate::{Consistency, StoreCommand, StoreServer, StoreTransport};
+use async_trait::async_trait;
 use derivative::Derivative;
 use little_raft::message::Message;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
-
-use crate::rpc::proto::rpc_server::Rpc;
-use crate::{Consistency, StoreCommand, StoreServer, StoreTransport};
 
 #[allow(missing_docs)]
 pub mod proto {
@@ -19,7 +19,7 @@ use proto::{
     VoteRequest, VoteResponse,
 };
 
-type NodeAddrFn = dyn Fn(usize) -> String + Send;
+type NodeAddrFn = dyn Fn(usize) -> String + Send + Sync;
 
 /// RPC transport.
 #[derive(Derivative)]
@@ -37,6 +37,7 @@ impl RpcTransport {
     }
 }
 
+#[async_trait]
 impl StoreTransport for RpcTransport {
     fn send(&self, to_id: usize, msg: Message<StoreCommand>) {
         match msg {
@@ -159,6 +160,27 @@ impl StoreTransport for RpcTransport {
             }
         }
     }
+
+    async fn delegate(
+        &self,
+        to_id: usize,
+        sql: String,
+        consistency: Consistency,
+    ) -> Result<crate::server::QueryResults, crate::StoreError> {
+        let addr = (self.node_addr)(to_id);
+        let mut client = RpcClient::connect(addr).await.unwrap();
+        let query = tonic::Request::new(Query {
+            sql,
+            consistency: consistency as i32,
+        });
+        let response = client.execute(query).await.unwrap();
+        let response = response.into_inner();
+        let mut rows = vec![];
+        for row in response.rows {
+            rows.push(crate::server::QueryRow { values: row.values });
+        }
+        Ok(crate::server::QueryResults { rows })
+    }
 }
 
 /// RPC service.
@@ -182,13 +204,13 @@ impl Rpc for RpcService {
         request: Request<Query>,
     ) -> Result<Response<QueryResults>, tonic::Status> {
         let query = request.into_inner();
-        let server = self.server.clone();
         let consistency =
             proto::Consistency::from_i32(query.consistency).unwrap_or(proto::Consistency::Strong);
         let consistency = match consistency {
             proto::Consistency::Strong => Consistency::Strong,
             proto::Consistency::RelaxedReads => Consistency::RelaxedReads,
         };
+        let server = self.server.clone();
         let results = match server.query(query.sql, consistency).await {
             Ok(results) => results,
             Err(e) => return Err(Status::internal(format!("{}", e))),
@@ -214,7 +236,8 @@ impl Rpc for RpcService {
             last_log_index,
             last_log_term,
         };
-        self.server.recv_msg(msg);
+        let server = self.server.clone();
+        server.recv_msg(msg);
         Ok(Response::new(Void {}))
     }
 
@@ -231,7 +254,8 @@ impl Rpc for RpcService {
             term,
             vote_granted,
         };
-        self.server.recv_msg(msg);
+        let server = self.server.clone();
+        server.recv_msg(msg);
         Ok(Response::new(Void {}))
     }
 
@@ -269,7 +293,8 @@ impl Rpc for RpcService {
             entries,
             commit_index,
         };
-        self.server.recv_msg(msg);
+        let server = self.server.clone();
+        server.recv_msg(msg);
         Ok(Response::new(Void {}))
     }
 
@@ -290,7 +315,8 @@ impl Rpc for RpcService {
             last_index,
             mismatch_index,
         };
-        self.server.recv_msg(msg);
+        let server = self.server.clone();
+        server.recv_msg(msg);
         Ok(Response::new(Void {}))
     }
 }
