@@ -2,12 +2,10 @@
 
 use crate::errors::StoreError;
 use async_notify::Notify;
+use async_trait::async_trait;
 use crossbeam_channel as channel;
 use crossbeam_channel::{Receiver, Sender};
 use derivative::Derivative;
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-
 use little_raft::{
     cluster::Cluster,
     message::Message,
@@ -15,6 +13,8 @@ use little_raft::{
     state_machine::{StateMachine, StateMachineTransition, TransitionState},
 };
 use sqlite::Connection;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -22,9 +22,18 @@ use std::time::Duration;
 ///
 /// Your application should implement this trait to provide network access
 /// to the ChiselStore server.
+#[async_trait]
 pub trait StoreTransport {
     /// Send a store command message `msg` to `to_id` node.
     fn send(&self, to_id: usize, msg: Message<StoreCommand>);
+
+    /// Delegate command to another node.
+    async fn delegate(
+        &self,
+        to_id: usize,
+        sql: String,
+        consistency: Consistency,
+    ) -> Result<QueryResults, StoreError>;
 }
 
 /// Consistency mode.
@@ -59,17 +68,17 @@ impl StateMachineTransition for StoreCommand {
 
 #[derive(Derivative)]
 #[derivative(Debug)]
-struct Store<T: StoreTransport> {
+struct Store<T: StoreTransport + Send + Sync> {
     /// ID of the node this Cluster objecti s on.
     this_id: usize,
     /// Is this node the leader?
-    is_leader: bool,
+    leader: Option<usize>,
     leader_exists: AtomicBool,
     waiters: Vec<Arc<Notify>>,
     /// Pending messages
     pending_messages: Vec<Message<StoreCommand>>,
     /// Transport layer.
-    transport: T,
+    transport: Arc<T>,
     #[derivative(Debug = "ignore")]
     conn: Connection,
     pending_transitions: Vec<StoreCommand>,
@@ -77,19 +86,26 @@ struct Store<T: StoreTransport> {
     results: HashMap<u64, Result<QueryResults, StoreError>>,
 }
 
-impl<T: StoreTransport> Store<T> {
+impl<T: StoreTransport + Send + Sync> Store<T> {
     pub fn new(this_id: usize, transport: T, conn: Connection) -> Self {
         Store {
             this_id,
-            is_leader: false,
+            leader: None,
             leader_exists: AtomicBool::new(false),
             waiters: Vec::new(),
             pending_messages: Vec::new(),
-            transport,
+            transport: Arc::new(transport),
             conn,
             pending_transitions: Vec::new(),
             command_completions: HashMap::new(),
             results: HashMap::new(),
+        }
+    }
+
+    pub fn is_leader(&self) -> bool {
+        match self.leader {
+            Some(id) => id == self.this_id,
+            _ => false,
         }
     }
 
@@ -107,7 +123,7 @@ impl<T: StoreTransport> Store<T> {
     }
 }
 
-impl<T: StoreTransport> StateMachine<StoreCommand> for Store<T> {
+impl<T: StoreTransport + Send + Sync> StateMachine<StoreCommand> for Store<T> {
     fn register_transition_state(&mut self, transition_id: usize, state: TransitionState) {
         if state == TransitionState::Applied {
             if let Some(completion) = self.command_completions.remove(&(transition_id as u64)) {
@@ -121,7 +137,7 @@ impl<T: StoreTransport> StateMachine<StoreCommand> for Store<T> {
             return;
         }
         let results = self.query(transition.sql);
-        if self.is_leader {
+        if self.is_leader() {
             self.results.insert(transition.id as u64, results);
         }
     }
@@ -133,18 +149,14 @@ impl<T: StoreTransport> StateMachine<StoreCommand> for Store<T> {
     }
 }
 
-impl<T: StoreTransport> Cluster<StoreCommand> for Store<T> {
+impl<T: StoreTransport + Send + Sync> Cluster<StoreCommand> for Store<T> {
     fn register_leader(&mut self, leader_id: Option<ReplicaID>) {
         if let Some(id) = leader_id {
             println!("{} is the leader.", id);
-            if id == self.this_id {
-                self.is_leader = true;
-            } else {
-                self.is_leader = false;
-            }
+            self.leader = Some(id);
             self.leader_exists.store(true, Ordering::SeqCst);
         } else {
-            self.is_leader = false;
+            self.leader = None;
             self.leader_exists.store(false, Ordering::SeqCst);
         }
         let waiters = self.waiters.clone();
@@ -174,7 +186,7 @@ type StoreReplica<T> = Replica<Store<T>, StoreCommand, Store<T>>;
 /// ChiselStore server.
 #[derive(Derivative)]
 #[derivative(Debug)]
-pub struct StoreServer<T: StoreTransport> {
+pub struct StoreServer<T: StoreTransport + Send + Sync> {
     next_cmd_id: AtomicU64,
     store: Arc<Mutex<Store<T>>>,
     #[derivative(Debug = "ignore")]
@@ -210,7 +222,7 @@ const HEARTBEAT_TIMEOUT: Duration = Duration::from_millis(500);
 const MIN_ELECTION_TIMEOUT: Duration = Duration::from_millis(750);
 const MAX_ELECTION_TIMEOUT: Duration = Duration::from_millis(950);
 
-impl<T: StoreTransport + Send + 'static> StoreServer<T> {
+impl<T: StoreTransport + Send + Sync> StoreServer<T> {
     /// Start a new server as part of a ChiselStore cluster.
     pub fn start(this_id: usize, peers: Vec<usize>, transport: T) -> Result<Self, StoreError> {
         let conn = sqlite::open(":memory:")?;
@@ -267,20 +279,30 @@ impl<T: StoreTransport + Send + 'static> StoreServer<T> {
         let results = match consistency {
             Consistency::Strong => {
                 self.wait_for_leader().await;
-                if !self.store.lock().unwrap().is_leader {
-                    // FIXME: delegate to leader if possible.
+                let (delegate, leader, transport) = {
+                    let store = self.store.lock().unwrap();
+                    (!store.is_leader(), store.leader, store.transport.clone())
+                };
+                if delegate {
+                    if let Some(leader_id) = leader {
+                        return transport
+                            .delegate(leader_id, stmt.as_ref().to_string(), consistency)
+                            .await;
+                    }
                     return Err(StoreError::NotLeader);
                 }
-                let id = self.next_cmd_id.fetch_add(1, Ordering::SeqCst);
-                let notify = Arc::new(Notify::new());
-                {
+                let (notify, id) = {
                     let mut store = self.store.lock().unwrap();
-                    store.command_completions.insert(id, notify.clone());
-                    store.pending_transitions.push(StoreCommand {
+                    let id = self.next_cmd_id.fetch_add(1, Ordering::SeqCst);
+                    let cmd = StoreCommand {
                         id: id as usize,
                         sql: stmt.as_ref().to_string(),
-                    });
-                }
+                    };
+                    let notify = Arc::new(Notify::new());
+                    store.command_completions.insert(id, notify.clone());
+                    store.pending_transitions.push(cmd);
+                    (notify, id)
+                };
                 self.transition_notifier_tx.send(()).unwrap();
                 notify.notified().await;
                 let results = self.store.lock().unwrap().results.remove(&id).unwrap();
@@ -306,7 +328,13 @@ impl<T: StoreTransport + Send + 'static> StoreServer<T> {
                 store.waiters.push(notify.clone());
                 notify
             };
-            if self.store.lock().unwrap().leader_exists.load(Ordering::SeqCst) {
+            if self
+                .store
+                .lock()
+                .unwrap()
+                .leader_exists
+                .load(Ordering::SeqCst)
+            {
                 break;
             }
             // TODO: add a timeout and fail if necessary
