@@ -63,7 +63,7 @@ struct Store<T: StoreTransport> {
     /// ID of the node this Cluster objecti s on.
     this_id: usize,
     /// Is this node the leader?
-    is_leader: bool,
+    leader: Option<usize>,
     leader_exists: AtomicBool,
     waiters: Vec<Arc<Notify>>,
     /// Pending messages
@@ -81,7 +81,7 @@ impl<T: StoreTransport> Store<T> {
     pub fn new(this_id: usize, transport: T, conn: Connection) -> Self {
         Store {
             this_id,
-            is_leader: false,
+            leader: None,
             leader_exists: AtomicBool::new(false),
             waiters: Vec::new(),
             pending_messages: Vec::new(),
@@ -90,6 +90,13 @@ impl<T: StoreTransport> Store<T> {
             pending_transitions: Vec::new(),
             command_completions: HashMap::new(),
             results: HashMap::new(),
+        }
+    }
+
+    pub fn is_leader(&self) -> bool {
+        match self.leader {
+            Some(id) => id == self.this_id,
+            _ => false,
         }
     }
 
@@ -121,7 +128,7 @@ impl<T: StoreTransport> StateMachine<StoreCommand> for Store<T> {
             return;
         }
         let results = self.query(transition.sql);
-        if self.is_leader {
+        if self.is_leader() {
             self.results.insert(transition.id as u64, results);
         }
     }
@@ -137,14 +144,10 @@ impl<T: StoreTransport> Cluster<StoreCommand> for Store<T> {
     fn register_leader(&mut self, leader_id: Option<ReplicaID>) {
         if let Some(id) = leader_id {
             println!("{} is the leader.", id);
-            if id == self.this_id {
-                self.is_leader = true;
-            } else {
-                self.is_leader = false;
-            }
+            self.leader = Some(id);
             self.leader_exists.store(true, Ordering::SeqCst);
         } else {
-            self.is_leader = false;
+            self.leader = None;
             self.leader_exists.store(false, Ordering::SeqCst);
         }
         let waiters = self.waiters.clone();
@@ -267,7 +270,7 @@ impl<T: StoreTransport + Send + 'static> StoreServer<T> {
         let results = match consistency {
             Consistency::Strong => {
                 self.wait_for_leader().await;
-                if !self.store.lock().unwrap().is_leader {
+                if !self.store.lock().unwrap().is_leader() {
                     // FIXME: delegate to leader if possible.
                     return Err(StoreError::NotLeader);
                 }
