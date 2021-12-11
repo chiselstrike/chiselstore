@@ -256,22 +256,6 @@ impl<T: StoreTransport + Send + 'static> StoreServer<T> {
         stmt: S,
         consistency: Consistency,
     ) -> Result<QueryResults, StoreError> {
-        loop {
-            let notify = {
-                let mut store = self.store.lock().unwrap();
-                if store.leader_exists.load(Ordering::SeqCst) {
-                    break;
-                }
-                let notify = Arc::new(Notify::new());
-                store.waiters.push(notify.clone());
-                notify
-            };
-            if self.store.lock().unwrap().leader_exists.load(Ordering::SeqCst) {
-                break;
-            }
-            // TODO: add a timeout and fail if necessary
-            notify.notified().await;
-        }
         // If the statement is a read statement, let's use whatever
         // consistency the user provided; otherwise fall back to strong
         // consistency.
@@ -282,6 +266,7 @@ impl<T: StoreTransport + Send + 'static> StoreServer<T> {
         };
         let results = match consistency {
             Consistency::Strong => {
+                self.wait_for_leader().await;
                 if !self.store.lock().unwrap().is_leader {
                     // FIXME: delegate to leader if possible.
                     return Err(StoreError::NotLeader);
@@ -307,6 +292,26 @@ impl<T: StoreTransport + Send + 'static> StoreServer<T> {
             }
         };
         Ok(results)
+    }
+
+    /// Wait for a leader to be elected.
+    pub async fn wait_for_leader(&self) {
+        loop {
+            let notify = {
+                let mut store = self.store.lock().unwrap();
+                if store.leader_exists.load(Ordering::SeqCst) {
+                    break;
+                }
+                let notify = Arc::new(Notify::new());
+                store.waiters.push(notify.clone());
+                notify
+            };
+            if self.store.lock().unwrap().leader_exists.load(Ordering::SeqCst) {
+                break;
+            }
+            // TODO: add a timeout and fail if necessary
+            notify.notified().await;
+        }
     }
 
     /// Receive a message from the ChiselStore cluster.
