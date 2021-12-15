@@ -101,7 +101,10 @@ impl<T: StoreTransport + Send + Sync> Store<T> {
         for _ in 0..conn_pool_size {
             // FIXME: Let's use the 'memdb' VFS of SQLite, which allows concurrent threads
             // accessing the same in-memory database.
-            let flags = OpenFlags::new().set_read_write().set_create().set_no_mutex();
+            let flags = OpenFlags::new()
+                .set_read_write()
+                .set_create()
+                .set_no_mutex();
             let mut conn =
                 Connection::open_with_flags(format!("node{}.db", this_id), flags).unwrap();
             conn.set_busy_timeout(5000).unwrap();
