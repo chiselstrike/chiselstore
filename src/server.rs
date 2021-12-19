@@ -158,10 +158,13 @@ fn query(conn: Arc<Mutex<Connection>>, sql: String) -> Result<QueryResults, Stor
 
 impl<T: StoreTransport + Send + Sync> StateMachine<StoreCommand, Bytes> for Store<T> {
     fn register_transition_state(&mut self, transition_id: usize, state: TransitionState) {
-        if state == TransitionState::Applied {
-            if let Some(completion) = self.command_completions.remove(&(transition_id as u64)) {
-                completion.notify();
+        match state {
+            TransitionState::Applied | TransitionState::Abandoned(_) => {
+                if let Some(completion) = self.command_completions.remove(&(transition_id as u64)) {
+                    completion.notify();
+                }
             }
+            _ => (),
         }
     }
 
@@ -351,8 +354,11 @@ impl<T: StoreTransport + Send + Sync> StoreServer<T> {
                 };
                 self.transition_notifier_tx.send(()).unwrap();
                 notify.notified().await;
-                let results = self.store.lock().unwrap().results.remove(&id).unwrap();
-                results?
+                if let Some(results) = self.store.lock().unwrap().results.remove(&id) {
+                    results?
+                } else {
+                    return Err(StoreError::NotLeader);
+                }
             }
             Consistency::RelaxedReads => {
                 let conn = {
