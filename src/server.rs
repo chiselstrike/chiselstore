@@ -281,11 +281,13 @@ impl<T: StoreTransport + Send + Sync> StoreServer<T> {
         };
         let (message_notifier_tx, message_notifier_rx) = channel::unbounded();
         let (transition_notifier_tx, transition_notifier_rx) = channel::unbounded();
+        let snapshot_delta = 100;
         let replica = Replica::new(
             this_id,
             peers,
             store.clone(),
             store.clone(),
+            snapshot_delta,
             noop,
             HEARTBEAT_TIMEOUT,
             (MIN_ELECTION_TIMEOUT, MAX_ELECTION_TIMEOUT),
