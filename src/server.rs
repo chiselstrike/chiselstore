@@ -213,7 +213,7 @@ impl<T: StoreTransport + Send + Sync> Cluster<StoreCommand> for Store<T> {
     }
 }
 
-type StoreReplica<T> = Replica<Store<T>, StoreCommand, Store<T>>;
+type StoreReplica<T> = Replica<Store<T>, Store<T>, StoreCommand>;
 
 /// ChiselStore server.
 #[derive(Derivative)]
