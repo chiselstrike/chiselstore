@@ -1,7 +1,7 @@
 //! ChiselStore RPC module.
 
 use crate::rpc::proto::rpc_server::Rpc;
-use crate::{Consistency, StoreCommand, StoreServer, StoreTransport};
+use crate::{Consistency, SequencePaxosStoreTransport, StoreCommand};
 use async_mutex::Mutex;
 use async_trait::async_trait;
 use crossbeam::queue::ArrayQueue;
@@ -26,8 +26,6 @@ use proto::{
 };
 
 use self::proto::{ProtoStopSign, ProtoSyncItem};
-
-type NodeAddrFn = dyn Fn(usize) -> String + Send + Sync;
 
 // --------------- Connection ---------------
 #[derive(Debug)]
@@ -87,7 +85,8 @@ impl Connections {
     }
 }
 
-// -------------- RPC transport -------------
+type NodeAddrFn = dyn Fn(usize) -> String + Send + Sync;
+
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub struct RpcTransport {
@@ -181,7 +180,7 @@ fn get_proto_forward_compaction(
 
 #[async_trait]
 impl SequencePaxosStoreTransport for RpcTransport {
-    fn send(&self, msg: messages::Message<StoreCommand, ()>) {
+    fn send_paxos_message(&self, msg: messages::Message<StoreCommand, ()>) {
         match msg.msg {
             messages::PaxosMsg::PrepareReq => {
                 let from = msg.from;
