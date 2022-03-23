@@ -12,11 +12,11 @@ async-mutex = "1.4.0"
 crossbeam-channel = "0.5.1"
 crossbeam = "0.8.1"
 derivative = "2.2.0"
-little_raft = "0.1.6"
 prost = "0.8.0"
 sqlite = "0.26.0"
 thiserror = "1.0.30"
 tokio = { version = "1.11.0", features = ["full"] }
+omnipaxos_core = { git = "https://github.com/haraldng/omnipaxos" }
 tonic = "0.5.2"
 
 [build-dependencies]

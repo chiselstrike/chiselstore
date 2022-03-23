@@ -2,68 +2,194 @@ syntax = "proto3";
 
 package proto;
 
-message Void {
+message ProtoVoid {}
+
+enum ProtoConsistency {
+  STRONG = 0;
+  RELAXED_READS = 1;
 }
 
-enum Consistency {
-    STRONG = 0;
-    RELAXED_READS = 1;
+message ProtoQuery {
+  string sql = 1;
+  ProtoConsistency consistency = 2;
 }
 
-message Query {
-    string sql = 1;
-    Consistency consistency = 2;
+message ProtoQueryResults { repeated ProtoQueryRow rows = 1; }
+
+message ProtoQueryRow { repeated string values = 1; }
+
+// Sequence Paxos
+
+message ProtoEntry {
+  uint64 id = 1;
+  string sql = 2;
 }
 
-message QueryResults {
-    repeated QueryRow rows = 1;
+message ProtoBallot {
+  uint32 n = 1;
+  uint64 priority = 2;
+  uint64 pid = 3;
 }
 
-message QueryRow {
-    repeated string values = 1;
+message ProtoSyncItem {
+  oneof syncitem {
+    ProtoEntries entries = 1;
+    bool snapshot = 2;
+    bool none = 3;
+  }
+
+  message ProtoEntries { repeated ProtoEntry entries = 1; }
 }
 
-message VoteRequest {
-    uint64 from_id = 1;
-    uint64 term = 2;
-    uint64 last_log_index = 3;
-    uint64 last_log_term = 4;
+message ProtoStopSign {
+  uint32 config_id = 1;
+  repeated uint64 nodes = 2;
+  repeated uint32 metadata = 3;
 }
 
-message VoteResponse {
-    uint64 from_id = 1;
-    uint64 term = 2;
-    bool vote_granted = 3;
+message ProtoPrepareReq {
+  uint64 from = 1;
+  uint64 to = 2;
 }
 
-message AppendEntriesRequest {
-    uint64 from_id = 1;
-    uint64 term = 2;
-    uint64 prev_log_index = 3;
-    uint64 prev_log_term = 4;
-    repeated LogEntry entries = 5;
-    uint64 commit_index = 6;
+message ProtoPrepare {
+  uint64 from = 1;
+  uint64 to = 2;
+  ProtoBallot n = 3;
+  uint64 ld = 4;
+  ProtoBallot n_accepted = 5;
+  uint64 la = 6;
 }
 
-message LogEntry {
-    uint64 id = 1;
-    string sql = 2;
-    uint64 index = 3;
-    uint64 term = 4;
+message ProtoPromise {
+  uint64 from = 1;
+  uint64 to = 2;
+  ProtoBallot n = 3;
+  ProtoBallot n_accepted = 4;
+  optional ProtoSyncItem sync_item = 5;
+  uint64 ld = 6;
+  uint64 la = 7;
+  optional ProtoStopSign stopsign = 8;
 }
 
-message AppendEntriesResponse {
-    uint64 from_id = 1;
-    uint64 term = 2;
-    bool success = 3;
-    uint64 last_index = 4;
-    optional uint64 mismatch_index = 5;
+message ProtoAcceptSync {
+  uint64 from = 1;
+  uint64 to = 2;
+  ProtoBallot n = 3;
+  ProtoSyncItem sync_item = 4;
+  uint64 sync_idx = 5;
+  optional uint64 decided_idx = 6;
+  optional ProtoStopSign stopsign = 7;
+}
+
+message ProtoFirstAccept {
+  uint64 from = 1;
+  uint64 to = 2;
+  ProtoBallot n = 3;
+  repeated ProtoEntry entries = 4;
+}
+
+message ProtoAcceptDecide {
+  uint64 from = 1;
+  uint64 to = 2;
+  ProtoBallot n = 3;
+  uint64 ld = 4;
+  repeated ProtoEntry entries = 5;
+}
+
+message ProtoAccepted {
+  uint64 from = 1;
+  uint64 to = 2;
+  ProtoBallot n = 3;
+  uint64 la = 4;
+}
+
+message ProtoDecide {
+  uint64 from = 1;
+  uint64 to = 2;
+  ProtoBallot n = 3;
+  uint64 ld = 4;
+}
+
+message ProtoProposalForward {
+  uint64 from = 1;
+  uint64 to = 2;
+  repeated ProtoEntry proposals = 3;
+}
+
+message ProtoTrim { optional uint64 trim = 1; }
+
+message ProtoCompaction {
+  uint64 from = 1;
+  uint64 to = 2;
+
+  oneof compaction {
+    ProtoTrim trim = 3;
+    uint64 snapshot = 4;
+  }
+}
+
+message ProtoForwardCompaction {
+  uint64 from = 1;
+  uint64 to = 2;
+
+  oneof compaction {
+    ProtoTrim trim = 3;
+    uint64 snapshot = 4;
+  }
+}
+
+message ProtoAcceptStopSign {
+  uint64 from = 1;
+  uint64 to = 2;
+  ProtoBallot n = 3;
+  ProtoStopSign stopsign = 4;
+}
+
+message ProtoAcceptedStopSign {
+  uint64 from = 1;
+  uint64 to = 2;
+  ProtoBallot n = 3;
+}
+
+message ProtoDecideStopSign {
+  uint64 from = 1;
+  uint64 to = 2;
+  ProtoBallot n = 3;
+}
+
+// BLE
+message ProtoHeartbeatRequest {
+  uint64 from = 1;
+  uint64 to = 2;
+  uint32 round = 3;
+}
+
+message ProtoHeartbeatReply {
+  uint64 from = 1;
+  uint64 to = 2;
+  uint32 round = 3;
+  ProtoBallot ballot = 4;
+  bool majority_connected = 5;
 }
 
 service RPC {
-    rpc Execute(Query) returns (QueryResults);
-    rpc Vote(VoteRequest) returns (Void);
-    rpc RespondToVote(VoteResponse) returns (Void);
-    rpc AppendEntries(AppendEntriesRequest) returns (Void);
-    rpc RespondToAppendEntries(AppendEntriesResponse) returns (Void);
+  rpc Execute(ProtoQuery) returns (ProtoQueryResults);
+  rpc PrepareRequest(ProtoPrepareReq) returns (ProtoVoid);
+  rpc PrepareMessage(ProtoPrepare) returns (ProtoVoid);
+  rpc PromiseMessage(ProtoPromise) returns (ProtoVoid);
+  rpc AcceptSyncMessage(ProtoAcceptSync) returns (ProtoVoid);
+  rpc FirstAcceptMessage(ProtoFirstAccept) returns (ProtoVoid);
+  rpc AcceptDecideMessage(ProtoAcceptDecide) returns (ProtoVoid);
+  rpc AcceptedMessage(ProtoAccepted) returns (ProtoVoid);
+  rpc DecideMessage(ProtoDecide) returns (ProtoVoid);
+  rpc ProposalForwardMessage(ProtoProposalForward) returns (ProtoVoid);
+  rpc CompactionMessage(ProtoCompaction) returns (ProtoVoid);
+  rpc ForwardCompactionMessage(ProtoForwardCompaction) returns (ProtoVoid);
+  rpc AcceptStopSignMessage(ProtoAcceptStopSign) returns (ProtoVoid);
+  rpc AcceptedStopSignMessage(ProtoAcceptedStopSign) returns (ProtoVoid);
+  rpc DecideStopSignMessage(ProtoDecideStopSign) returns (ProtoVoid);
+
+  rpc HeartbeatRequestMessage(ProtoHeartbeatRequest) returns (ProtoVoid);
+  rpc HeartbeatReplyMessage(ProtoHeartbeatReply) returns (ProtoVoid);
 }
