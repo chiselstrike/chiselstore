@@ -35,10 +35,16 @@ fn node_rpc_addr(id: usize) -> String {
 #[tokio::main]
 async fn main() -> Result<()> {
     let opt = Opt::from_args();
+    let peers = opt
+        .peers
+        .clone()
+        .iter_mut()
+        .map(|peer| *peer as u64)
+        .collect();
     let (host, port) = node_authority(opt.id);
     let rpc_listen_addr = format!("{}:{}", host, port).parse().unwrap();
     let transport = RpcTransport::new(Box::new(node_rpc_addr));
-    let server = StoreServer::start(opt.id, opt.peers, transport)?;
+    let server = StoreServer::start(opt.id as u64, peers, transport)?;
     let server = Arc::new(server);
     let f = {
         let server = server.clone();

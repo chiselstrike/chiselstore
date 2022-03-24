@@ -300,15 +300,11 @@ const HEARTBEAT_DELAY: u64 = 10;
 const CONN_POOL_SIZE: usize = 20;
 
 impl<T: SequencePaxosStoreTransport + Send + Sync> StoreServer<T> {
-    pub fn start(
-        thid_id: u64,
-        peers: Vec<u64>,
-        config_id: u32,
-        transport: T,
-    ) -> Result<Self, StoreError> {
+    pub fn start(thid_id: u64, peers: Vec<u64>, transport: T) -> Result<Self, StoreError> {
         let config = StoreConfig {
             conn_pool_size: CONN_POOL_SIZE,
         };
+        let config_id = 1;
         let (msg_tx, msg_rx) = channel::unbounded::<messages::Message<StoreCommand, ()>>();
         let (ble_tx, ble_rx) = channel::unbounded::<ble::messages::BLEMessage>();
         let (trans_tx, trans_rx) = channel::unbounded::<StoreCommand>();
