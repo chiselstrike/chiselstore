@@ -18,7 +18,6 @@ pub mod proto {
 
 use proto::rpc_client::RpcClient;
 
-// --------------- Connection ---------------
 #[derive(Debug)]
 struct ConnectionPool {
     connections: ArrayQueue<RpcClient<tonic::transport::Channel>>,
@@ -553,7 +552,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
     }
 }
 
-// --------------- RPC service --------------
+// functions to get ble or paxos structs from proto messages
 
 fn get_ballot_from_proto(proto_ballot: proto::Ballot) -> ble::Ballot {
     ble::Ballot {
@@ -664,6 +663,7 @@ impl Rpc for RpcService {
         let to_id = msg.to as u64;
 
         let msg = messages::Message::with(from_id, to_id, messages::PaxosMsg::PrepareReq);
+
         let server = self.server.clone();
         server.recv_msg(msg);
         Ok(Response::new(proto::Void {}))
@@ -681,9 +681,9 @@ impl Rpc for RpcService {
         let ld = msg.ld;
         let n_accepted = get_ballot_from_proto(msg.n_accepted.unwrap());
         let la = msg.la;
-
         let prep = messages::Prepare::with(n, ld, n_accepted, la);
         let msg = messages::Message::with(from_id, to_id, messages::PaxosMsg::Prepare(prep));
+
         let server = self.server.clone();
         server.recv_msg(msg);
         Ok(Response::new(proto::Void {}))
@@ -699,24 +699,21 @@ impl Rpc for RpcService {
 
         let n = get_ballot_from_proto(msg.n.unwrap());
         let n_accepted = get_ballot_from_proto(msg.n_accepted.unwrap());
-
         let sync_item = msg.sync_item;
         let sync_item = match sync_item {
             Some(sync_item) => Some(get_syncitem_from_proto(sync_item)),
             _ => None,
         };
-
         let ld = msg.ld;
         let la = msg.la;
-
         let stopsign = msg.stopsign;
         let stopsign = match stopsign {
             Some(stopsign) => Some(get_stopsign_from_proto(stopsign)),
             _ => None,
         };
-
         let promise = messages::Promise::with(n, n_accepted, sync_item, ld, la, stopsign);
         let msg = messages::Message::with(from_id, to_id, messages::PaxosMsg::Promise(promise));
+
         let server = self.server.clone();
         server.recv_msg(msg);
         Ok(Response::new(proto::Void {}))
@@ -731,21 +728,18 @@ impl Rpc for RpcService {
         let to_id = msg.to;
 
         let n = get_ballot_from_proto(msg.n.unwrap());
-
         let sync_item = msg.sync_item;
         let sync_item = get_syncitem_from_proto(sync_item.unwrap());
-
         let sync_idx = msg.sync_idx;
         let decide_idx = msg.decided_idx;
-
         let stopsign = msg.stopsign;
         let stopsign = match stopsign {
             Some(stopsign) => Some(get_stopsign_from_proto(stopsign)),
             _ => None,
         };
-
         let acc_sync = messages::AcceptSync::with(n, sync_item, sync_idx, decide_idx, stopsign);
         let msg = messages::Message::with(from_id, to_id, messages::PaxosMsg::AcceptSync(acc_sync));
+
         let server = self.server.clone();
         server.recv_msg(msg);
         Ok(Response::new(proto::Void {}))
@@ -765,10 +759,10 @@ impl Rpc for RpcService {
             .into_iter()
             .map(|entry| get_entry_from_proto(entry))
             .collect();
-
         let first_acc = messages::FirstAccept::with(n, entries);
         let msg =
             messages::Message::with(from_id, to_id, messages::PaxosMsg::FirstAccept(first_acc));
+
         let server = self.server.clone();
         server.recv_msg(msg);
         Ok(Response::new(proto::Void {}))
@@ -789,10 +783,10 @@ impl Rpc for RpcService {
             .into_iter()
             .map(|entry| get_entry_from_proto(entry))
             .collect();
-
         let acc_dec = messages::AcceptDecide::with(n, ld, entries);
         let msg =
             messages::Message::with(from_id, to_id, messages::PaxosMsg::AcceptDecide(acc_dec));
+
         let server = self.server.clone();
         server.recv_msg(msg);
         Ok(Response::new(proto::Void {}))
@@ -810,6 +804,7 @@ impl Rpc for RpcService {
         let la = msg.la;
         let acc = messages::Accepted::with(n, la);
         let msg = messages::Message::with(from_id, to_id, messages::PaxosMsg::Accepted(acc));
+
         let server = self.server.clone();
         server.recv_msg(msg);
         Ok(Response::new(proto::Void {}))
@@ -827,6 +822,7 @@ impl Rpc for RpcService {
         let ld = msg.ld;
         let dec = messages::Decide::with(n, ld);
         let msg = messages::Message::with(from_id, to_id, messages::PaxosMsg::Decide(dec));
+
         let server = self.server.clone();
         server.recv_msg(msg);
         Ok(Response::new(proto::Void {}))
@@ -845,9 +841,9 @@ impl Rpc for RpcService {
             .into_iter()
             .map(|prop| get_entry_from_proto(prop))
             .collect();
-
         let prop_for = messages::PaxosMsg::ProposalForward(proposals);
         let msg = messages::Message::with(from_id, to_id, prop_for);
+
         let server = self.server.clone();
         server.recv_msg(msg);
         Ok(Response::new(proto::Void {}))
@@ -864,6 +860,7 @@ impl Rpc for RpcService {
         let compaction = get_compaction_from_proto(msg.compaction.unwrap());
         let com = messages::PaxosMsg::Compaction(compaction);
         let msg = messages::Message::with(from_id, to_id, com);
+
         let server = self.server.clone();
         server.recv_msg(msg);
         Ok(Response::new(proto::Void {}))
@@ -880,6 +877,7 @@ impl Rpc for RpcService {
         let compaction = get_forward_compaction_from_proto(msg.compaction.unwrap());
         let com = messages::PaxosMsg::ForwardCompaction(compaction);
         let msg = messages::Message::with(from_id, to_id, com);
+
         let server = self.server.clone();
         server.recv_msg(msg);
         Ok(Response::new(proto::Void {}))
@@ -894,11 +892,11 @@ impl Rpc for RpcService {
         let to_id = msg.to;
 
         let n = get_ballot_from_proto(msg.n.unwrap());
-
         let stopsign = get_stopsign_from_proto(msg.stopsign.unwrap());
         let acc_ss = messages::AcceptStopSign::with(n, stopsign);
         let msg =
             messages::Message::with(from_id, to_id, messages::PaxosMsg::AcceptStopSign(acc_ss));
+
         let server = self.server.clone();
         server.recv_msg(msg);
         Ok(Response::new(proto::Void {}))
@@ -919,6 +917,7 @@ impl Rpc for RpcService {
             to_id,
             messages::PaxosMsg::AcceptedStopSign(acced_ss),
         );
+
         let server = self.server.clone();
         server.recv_msg(msg);
         Ok(Response::new(proto::Void {}))
@@ -936,6 +935,7 @@ impl Rpc for RpcService {
         let dec_ss = messages::DecideStopSign::with(n);
         let msg =
             messages::Message::with(from_id, to_id, messages::PaxosMsg::DecideStopSign(dec_ss));
+
         let server = self.server.clone();
         server.recv_msg(msg);
         Ok(Response::new(proto::Void {}))
@@ -948,6 +948,7 @@ impl Rpc for RpcService {
         let msg = request.into_inner();
         let from_id = msg.from;
         let to_id = msg.to;
+
         let round = msg.round;
         let req = ble::messages::HeartbeatRequest::with(round);
         let msg = ble::messages::BLEMessage::with(
@@ -955,6 +956,7 @@ impl Rpc for RpcService {
             to_id,
             ble::messages::HeartbeatMsg::Request(req),
         );
+
         let server = self.server.clone();
         server.recv_ble_msg(msg);
         Ok(Response::new(proto::Void {}))
@@ -977,6 +979,7 @@ impl Rpc for RpcService {
             to_id,
             ble::messages::HeartbeatMsg::Reply(rep),
         );
+
         let server = self.server.clone();
         server.recv_ble_msg(msg);
         Ok(Response::new(proto::Void {}))

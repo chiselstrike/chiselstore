@@ -13,7 +13,6 @@ use std::{thread::sleep, time::Duration};
 pub struct SequencePaxosReplica<T: SequencePaxosStoreTransport + Send + Sync> {
     id: u64,
     hb_delay: u64,
-    // store: Arc<Mutex<Store<T, S>>>,
     transport: Arc<T>,
     #[derivative(Debug = "ignore")]
     seq_paxos: Arc<Mutex<SequencePaxos<StoreCommand, (), Store<()>>>>,

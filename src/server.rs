@@ -122,6 +122,21 @@ impl SQLiteConnection {
         self.conn_idx += 1;
         conn.clone()
     }
+
+    fn query(&mut self, sql: String) -> Result<QueryResults, StoreError> {
+        let conn = self.get_connection();
+        let conn = conn.lock().unwrap();
+        let mut rows = vec![];
+        conn.iterate(sql, |pairs| {
+            let mut row = QueryRow::new();
+            for &(_, value) in pairs.iter() {
+                row.values.push(value.unwrap().to_string());
+            }
+            rows.push(row);
+            true
+        })?;
+        Ok(QueryResults { rows })
+    }
 }
 
 #[derive(Derivative)]
@@ -163,24 +178,9 @@ impl<S: Snapshot<StoreCommand>> Store<S> {
     pub fn apply_queries(&mut self, transition: StoreCommand) {
         let mut query_result_notifier = self.query_result_notifier.lock().unwrap();
         let mut sqlite_connection = self.sqlite_connection.lock().unwrap();
-        let conn = sqlite_connection.get_connection();
-        let results = query(conn, transition.sql);
+        let results = sqlite_connection.query(transition.sql);
         query_result_notifier.remove_command_and_add_result(transition.id as u64, results);
     }
-}
-
-fn query(conn: Arc<Mutex<Connection>>, sql: String) -> Result<QueryResults, StoreError> {
-    let conn = conn.lock().unwrap();
-    let mut rows = vec![];
-    conn.iterate(sql, |pairs| {
-        let mut row = QueryRow::new();
-        for &(_, value) in pairs.iter() {
-            row.values.push(value.unwrap().to_string());
-        }
-        rows.push(row);
-        true
-    })?;
-    Ok(QueryResults { rows })
 }
 
 impl<S> Storage<StoreCommand, S> for Store<S>
@@ -385,12 +385,8 @@ impl<T: SequencePaxosStoreTransport + Send + Sync> StoreServer<T> {
             }
 
             Consistency::RelaxedReads => {
-                let conn = {
-                    let mut sqlite_connection = self.sqlite_connection.lock().unwrap();
-                    sqlite_connection.get_connection()
-                };
-
-                query(conn, stmt.as_ref().to_string())?
+                let mut sqlite_connection = self.sqlite_connection.lock().unwrap();
+                sqlite_connection.query(stmt.as_ref().to_string())?
             }
         };
 
