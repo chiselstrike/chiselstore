@@ -1,7 +1,7 @@
 //! ChiselStore RPC module.
 
 use crate::rpc::proto::rpc_server::Rpc;
-use crate::{Consistency, SequencePaxosStoreTransport, StoreCommand};
+use crate::{Consistency, SequencePaxosStoreTransport, StoreCommand, StoreServer};
 use async_mutex::Mutex;
 use async_trait::async_trait;
 use crossbeam::queue::ArrayQueue;

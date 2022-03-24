@@ -91,8 +91,6 @@
 //! [1]: https://www.sqlite.org/index.html
 //! [2]: https://github.com/andreev-io/little-raft
 
-#![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
-
 pub mod errors;
 pub mod replica;
 pub mod rpc;
@@ -103,4 +101,4 @@ pub use server::Consistency;
 pub use server::SequencePaxosStoreTransport;
 pub use server::Store;
 pub use server::StoreCommand;
-// pub use server::StoreServer;
+pub use server::StoreServer;
