@@ -17,15 +17,6 @@ pub mod proto {
 }
 
 use proto::rpc_client::RpcClient;
-use proto::{
-    ProtoAcceptDecide, ProtoAcceptStopSign, ProtoAcceptSync, ProtoAccepted, ProtoAcceptedStopSign,
-    ProtoBallot, ProtoCompaction, ProtoConsistency, ProtoDecide, ProtoDecideStopSign, ProtoEntry,
-    ProtoFirstAccept, ProtoForwardCompaction, ProtoHeartbeatReply, ProtoHeartbeatRequest,
-    ProtoPrepare, ProtoPrepareReq, ProtoPromise, ProtoProposalForward, ProtoQuery,
-    ProtoQueryResults, ProtoQueryRow, ProtoTrim, ProtoVoid,
-};
-
-use self::proto::{ProtoStopSign, ProtoSyncItem};
 
 // --------------- Connection ---------------
 #[derive(Debug)]
@@ -106,26 +97,28 @@ impl RpcTransport {
     }
 }
 
-fn get_proto_ballot(ballot: ble::Ballot) -> ProtoBallot {
-    ProtoBallot {
+// Helping functions to get proto buffers from paxos or ble structs
+
+fn get_proto_ballot(ballot: ble::Ballot) -> proto::Ballot {
+    proto::Ballot {
         n: ballot.n,
         priority: ballot.priority,
         pid: ballot.pid,
     }
 }
 
-fn get_proto_entry(cmd: StoreCommand) -> ProtoEntry {
-    ProtoEntry {
+fn get_proto_entry(cmd: StoreCommand) -> proto::Entry {
+    proto::Entry {
         id: cmd.id as u64,
         sql: cmd.sql,
     }
 }
 
-fn get_proto_sync_item(syncitem: util::SyncItem<StoreCommand, ()>) -> ProtoSyncItem {
+fn get_proto_sync_item(syncitem: util::SyncItem<StoreCommand, ()>) -> proto::SyncItem {
     match syncitem {
-        util::SyncItem::Entries(entries) => ProtoSyncItem {
-            syncitem: Some(proto::proto_sync_item::Syncitem::Entries(
-                proto::proto_sync_item::ProtoEntries {
+        util::SyncItem::Entries(entries) => proto::SyncItem {
+            syncitem: Some(proto::sync_item::Syncitem::Entries(
+                proto::sync_item::Entries {
                     entries: entries
                         .into_iter()
                         .map(|entry| get_proto_entry(entry))
@@ -133,48 +126,46 @@ fn get_proto_sync_item(syncitem: util::SyncItem<StoreCommand, ()>) -> ProtoSyncI
                 },
             )),
         },
-        util::SyncItem::Snapshot(_) => ProtoSyncItem {
-            syncitem: Some(proto::proto_sync_item::Syncitem::Snapshot(true)),
+        util::SyncItem::Snapshot(_) => proto::SyncItem {
+            syncitem: Some(proto::sync_item::Syncitem::Snapshot(true)),
         },
-        util::SyncItem::None => ProtoSyncItem {
-            syncitem: Some(proto::proto_sync_item::Syncitem::None(true)),
+        util::SyncItem::None => proto::SyncItem {
+            syncitem: Some(proto::sync_item::Syncitem::None(true)),
         },
     }
 }
 
-fn get_proto_stop_sign(stopsign: storage::StopSign) -> ProtoStopSign {
+fn get_proto_stop_sign(stopsign: storage::StopSign) -> proto::StopSign {
     let config_id = stopsign.config_id;
     let nodes = stopsign.nodes;
     let metadata = match stopsign.metadata {
         Some(meta) => meta.into_iter().map(|m| m as u32).collect(),
         _ => Vec::new(),
     };
-    ProtoStopSign {
+    proto::StopSign {
         config_id,
         nodes,
         metadata,
     }
 }
 
-fn get_proto_compaction(compaction: messages::Compaction) -> proto::proto_compaction::Compaction {
+fn get_proto_compaction(compaction: messages::Compaction) -> proto::compaction::Compaction {
     match compaction {
         messages::Compaction::Trim(ent) => {
-            proto::proto_compaction::Compaction::Trim(ProtoTrim { trim: ent })
+            proto::compaction::Compaction::Trim(proto::Trim { trim: ent })
         }
-        messages::Compaction::Snapshot(snp) => proto::proto_compaction::Compaction::Snapshot(snp),
+        messages::Compaction::Snapshot(snp) => proto::compaction::Compaction::Snapshot(snp),
     }
 }
 
 fn get_proto_forward_compaction(
     compaction: messages::Compaction,
-) -> proto::proto_forward_compaction::Compaction {
+) -> proto::forward_compaction::Compaction {
     match compaction {
         messages::Compaction::Trim(ent) => {
-            proto::proto_forward_compaction::Compaction::Trim(ProtoTrim { trim: ent })
+            proto::forward_compaction::Compaction::Trim(proto::Trim { trim: ent })
         }
-        messages::Compaction::Snapshot(snp) => {
-            proto::proto_forward_compaction::Compaction::Snapshot(snp)
-        }
+        messages::Compaction::Snapshot(snp) => proto::forward_compaction::Compaction::Snapshot(snp),
     }
 }
 
@@ -185,7 +176,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
             messages::PaxosMsg::PrepareReq => {
                 let from = msg.from;
                 let to = msg.to;
-                let request = ProtoPrepareReq { from, to };
+                let request = proto::PrepareReq { from, to };
                 let peer = (self.node_addr)(to as usize);
                 let pool = self.connections.clone();
                 tokio::task::spawn(async move {
@@ -203,7 +194,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 let ld = prep.ld;
                 let n_accepted = Some(get_proto_ballot(prep.n_accepted));
                 let la = prep.la;
-                let request = ProtoPrepare {
+                let request = proto::Prepare {
                     from,
                     to,
                     n,
@@ -240,7 +231,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
                     _ => None,
                 };
 
-                let request = ProtoPromise {
+                let request = proto::Promise {
                     from,
                     to,
                     n,
@@ -276,7 +267,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
                     _ => None,
                 };
 
-                let request = ProtoAcceptSync {
+                let request = proto::AcceptSync {
                     from,
                     to,
                     n,
@@ -306,7 +297,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
                     .map(|entry| get_proto_entry(entry))
                     .collect();
 
-                let request = ProtoFirstAccept {
+                let request = proto::FirstAccept {
                     from,
                     to,
                     n,
@@ -334,7 +325,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
                     .map(|entry| get_proto_entry(entry))
                     .collect();
 
-                let request = ProtoAcceptDecide {
+                let request = proto::AcceptDecide {
                     from,
                     to,
                     n,
@@ -357,7 +348,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
 
                 let n = Some(get_proto_ballot(accepted.n));
                 let la = accepted.la;
-                let request = ProtoAccepted { from, to, n, la };
+                let request = proto::Accepted { from, to, n, la };
 
                 let peer = (self.node_addr)(to as usize);
                 let pool = self.connections.clone();
@@ -374,7 +365,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
 
                 let n = Some(get_proto_ballot(dec.n));
                 let ld = dec.ld;
-                let request = ProtoDecide { from, to, n, ld };
+                let request = proto::Decide { from, to, n, ld };
 
                 let peer = (self.node_addr)(to as usize);
                 let pool = self.connections.clone();
@@ -393,7 +384,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
                     .map(|prop| get_proto_entry(prop))
                     .collect();
 
-                let request = ProtoProposalForward {
+                let request = proto::ProposalForward {
                     from,
                     to,
                     proposals,
@@ -412,7 +403,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 let from = msg.from;
                 let to = msg.to;
                 let compaction = Some(get_proto_compaction(comps));
-                let request = ProtoCompaction {
+                let request = proto::Compaction {
                     from,
                     to,
                     compaction,
@@ -432,7 +423,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 let to = msg.to;
                 let compaction = Some(get_proto_forward_compaction(comps));
 
-                let request = ProtoForwardCompaction {
+                let request = proto::ForwardCompaction {
                     from,
                     to,
                     compaction,
@@ -459,7 +450,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 let stopsign = acc_ss.ss;
                 let stopsign = Some(get_proto_stop_sign(stopsign));
 
-                let request = ProtoAcceptStopSign {
+                let request = proto::AcceptStopSign {
                     from,
                     to,
                     n,
@@ -480,7 +471,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 let to = msg.to;
 
                 let n = Some(get_proto_ballot(acc_ss.n));
-                let request = ProtoAcceptedStopSign { from, to, n };
+                let request = proto::AcceptedStopSign { from, to, n };
 
                 let peer = (self.node_addr)(to as usize);
                 let pool = self.connections.clone();
@@ -500,7 +491,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 let to = msg.to;
 
                 let n = Some(get_proto_ballot(d_ss.n));
-                let request = ProtoDecideStopSign { from, to, n };
+                let request = proto::DecideStopSign { from, to, n };
 
                 let peer = (self.node_addr)(to as usize);
                 let pool = self.connections.clone();
@@ -520,7 +511,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 let to = ble_msg.to;
 
                 let round = req.round;
-                let request = ProtoHeartbeatRequest { from, to, round };
+                let request = proto::HeartbeatRequest { from, to, round };
 
                 let peer = (self.node_addr)(to as usize);
                 let pool = self.connections.clone();
@@ -542,7 +533,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
 
                 let ballot = Some(get_proto_ballot(reply.ballot));
                 let majority_connected = reply.majority_connected;
-                let request = ProtoHeartbeatReply {
+                let request = proto::HeartbeatReply {
                     from,
                     to,
                     round,
@@ -564,7 +555,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
 
 // --------------- RPC service --------------
 
-fn get_ballot_from_proto(proto_ballot: ProtoBallot) -> ble::Ballot {
+fn get_ballot_from_proto(proto_ballot: proto::Ballot) -> ble::Ballot {
     ble::Ballot {
         n: proto_ballot.n,
         priority: proto_ballot.priority,
@@ -572,30 +563,30 @@ fn get_ballot_from_proto(proto_ballot: ProtoBallot) -> ble::Ballot {
     }
 }
 
-fn get_entry_from_proto(proto_entry: ProtoEntry) -> StoreCommand {
+fn get_entry_from_proto(proto_entry: proto::Entry) -> StoreCommand {
     StoreCommand {
         id: proto_entry.id as usize,
         sql: proto_entry.sql,
     }
 }
 
-fn get_syncitem_from_proto(syncitem: ProtoSyncItem) -> util::SyncItem<StoreCommand, ()> {
+fn get_syncitem_from_proto(syncitem: proto::SyncItem) -> util::SyncItem<StoreCommand, ()> {
     match syncitem.syncitem.unwrap() {
-        proto::proto_sync_item::Syncitem::Entries(entries) => util::SyncItem::Entries(
+        proto::sync_item::Syncitem::Entries(entries) => util::SyncItem::Entries(
             entries
                 .entries
                 .into_iter()
                 .map(|ent| get_entry_from_proto(ent))
                 .collect(),
         ),
-        proto::proto_sync_item::Syncitem::Snapshot(_) => {
+        proto::sync_item::Syncitem::Snapshot(_) => {
             util::SyncItem::Snapshot(storage::SnapshotType::Complete(()))
         }
-        proto::proto_sync_item::Syncitem::None(_) => util::SyncItem::None,
+        proto::sync_item::Syncitem::None(_) => util::SyncItem::None,
     }
 }
 
-fn get_stopsign_from_proto(stopsign: ProtoStopSign) -> storage::StopSign {
+fn get_stopsign_from_proto(stopsign: proto::StopSign) -> storage::StopSign {
     let config_id = stopsign.config_id;
     let nodes = stopsign.nodes;
     let metadata = Some(stopsign.metadata.into_iter().map(|m| m as u8).collect());
@@ -606,25 +597,19 @@ fn get_stopsign_from_proto(stopsign: ProtoStopSign) -> storage::StopSign {
     }
 }
 
-fn get_compaction_from_proto(
-    compaction: proto::proto_compaction::Compaction,
-) -> messages::Compaction {
+fn get_compaction_from_proto(compaction: proto::compaction::Compaction) -> messages::Compaction {
     match compaction {
-        proto::proto_compaction::Compaction::Trim(trim) => messages::Compaction::Trim(trim.trim),
-        proto::proto_compaction::Compaction::Snapshot(snp) => messages::Compaction::Snapshot(snp),
+        proto::compaction::Compaction::Trim(trim) => messages::Compaction::Trim(trim.trim),
+        proto::compaction::Compaction::Snapshot(snp) => messages::Compaction::Snapshot(snp),
     }
 }
 
 fn get_forward_compaction_from_proto(
-    compaction: proto::proto_forward_compaction::Compaction,
+    compaction: proto::forward_compaction::Compaction,
 ) -> messages::Compaction {
     match compaction {
-        proto::proto_forward_compaction::Compaction::Trim(trim) => {
-            messages::Compaction::Trim(trim.trim)
-        }
-        proto::proto_forward_compaction::Compaction::Snapshot(snp) => {
-            messages::Compaction::Snapshot(snp)
-        }
+        proto::forward_compaction::Compaction::Trim(trim) => messages::Compaction::Trim(trim.trim),
+        proto::forward_compaction::Compaction::Snapshot(snp) => messages::Compaction::Snapshot(snp),
     }
 }
 
@@ -645,14 +630,14 @@ impl RpcService {
 impl Rpc for RpcService {
     async fn execute(
         &self,
-        request: Request<ProtoQuery>,
-    ) -> Result<Response<ProtoQueryResults>, tonic::Status> {
+        request: Request<proto::Query>,
+    ) -> Result<Response<proto::QueryResults>, tonic::Status> {
         let query = request.into_inner();
         let consistency =
-            ProtoConsistency::from_i32(query.consistency).unwrap_or(ProtoConsistency::Strong);
+            proto::Consistency::from_i32(query.consistency).unwrap_or(proto::Consistency::Strong);
         let consistency = match consistency {
-            ProtoConsistency::Strong => Consistency::Strong,
-            ProtoConsistency::RelaxedReads => Consistency::RelaxedReads,
+            proto::Consistency::Strong => Consistency::Strong,
+            proto::Consistency::RelaxedReads => Consistency::RelaxedReads,
         };
 
         let server = self.server.clone();
@@ -663,17 +648,17 @@ impl Rpc for RpcService {
 
         let mut rows = vec![];
         for row in results.rows {
-            rows.push(ProtoQueryRow {
+            rows.push(proto::QueryRow {
                 values: row.values.clone(),
             })
         }
-        Ok(Response::new(ProtoQueryResults { rows }))
+        Ok(Response::new(proto::QueryResults { rows }))
     }
 
     async fn prepare_request(
         &self,
-        request: Request<ProtoPrepareReq>,
-    ) -> Result<Response<ProtoVoid>, tonic::Status> {
+        request: Request<proto::PrepareReq>,
+    ) -> Result<Response<proto::Void>, tonic::Status> {
         let msg = request.into_inner();
         let from_id = msg.from as u64;
         let to_id = msg.to as u64;
@@ -681,13 +666,13 @@ impl Rpc for RpcService {
         let msg = messages::Message::with(from_id, to_id, messages::PaxosMsg::PrepareReq);
         let server = self.server.clone();
         server.recv_msg(msg);
-        Ok(Response::new(ProtoVoid {}))
+        Ok(Response::new(proto::Void {}))
     }
 
     async fn prepare_message(
         &self,
-        request: Request<ProtoPrepare>,
-    ) -> Result<Response<ProtoVoid>, tonic::Status> {
+        request: Request<proto::Prepare>,
+    ) -> Result<Response<proto::Void>, tonic::Status> {
         let msg = request.into_inner();
         let from_id = msg.from;
         let to_id = msg.to;
@@ -701,13 +686,13 @@ impl Rpc for RpcService {
         let msg = messages::Message::with(from_id, to_id, messages::PaxosMsg::Prepare(prep));
         let server = self.server.clone();
         server.recv_msg(msg);
-        Ok(Response::new(ProtoVoid {}))
+        Ok(Response::new(proto::Void {}))
     }
 
     async fn promise_message(
         &self,
-        request: Request<ProtoPromise>,
-    ) -> Result<Response<ProtoVoid>, tonic::Status> {
+        request: Request<proto::Promise>,
+    ) -> Result<Response<proto::Void>, tonic::Status> {
         let msg = request.into_inner();
         let from_id = msg.from;
         let to_id = msg.to;
@@ -734,13 +719,13 @@ impl Rpc for RpcService {
         let msg = messages::Message::with(from_id, to_id, messages::PaxosMsg::Promise(promise));
         let server = self.server.clone();
         server.recv_msg(msg);
-        Ok(Response::new(ProtoVoid {}))
+        Ok(Response::new(proto::Void {}))
     }
 
     async fn accept_sync_message(
         &self,
-        request: Request<ProtoAcceptSync>,
-    ) -> Result<Response<ProtoVoid>, tonic::Status> {
+        request: Request<proto::AcceptSync>,
+    ) -> Result<Response<proto::Void>, tonic::Status> {
         let msg = request.into_inner();
         let from_id = msg.from;
         let to_id = msg.to;
@@ -763,13 +748,13 @@ impl Rpc for RpcService {
         let msg = messages::Message::with(from_id, to_id, messages::PaxosMsg::AcceptSync(acc_sync));
         let server = self.server.clone();
         server.recv_msg(msg);
-        Ok(Response::new(ProtoVoid {}))
+        Ok(Response::new(proto::Void {}))
     }
 
     async fn first_accept_message(
         &self,
-        request: Request<ProtoFirstAccept>,
-    ) -> Result<Response<ProtoVoid>, tonic::Status> {
+        request: Request<proto::FirstAccept>,
+    ) -> Result<Response<proto::Void>, tonic::Status> {
         let msg = request.into_inner();
         let from_id = msg.from;
         let to_id = msg.to;
@@ -786,13 +771,13 @@ impl Rpc for RpcService {
             messages::Message::with(from_id, to_id, messages::PaxosMsg::FirstAccept(first_acc));
         let server = self.server.clone();
         server.recv_msg(msg);
-        Ok(Response::new(ProtoVoid {}))
+        Ok(Response::new(proto::Void {}))
     }
 
     async fn accept_decide_message(
         &self,
-        request: Request<ProtoAcceptDecide>,
-    ) -> Result<Response<ProtoVoid>, tonic::Status> {
+        request: Request<proto::AcceptDecide>,
+    ) -> Result<Response<proto::Void>, tonic::Status> {
         let msg = request.into_inner();
         let from_id = msg.from;
         let to_id = msg.to;
@@ -810,13 +795,13 @@ impl Rpc for RpcService {
             messages::Message::with(from_id, to_id, messages::PaxosMsg::AcceptDecide(acc_dec));
         let server = self.server.clone();
         server.recv_msg(msg);
-        Ok(Response::new(ProtoVoid {}))
+        Ok(Response::new(proto::Void {}))
     }
 
     async fn accepted_message(
         &self,
-        request: Request<ProtoAccepted>,
-    ) -> Result<Response<ProtoVoid>, tonic::Status> {
+        request: Request<proto::Accepted>,
+    ) -> Result<Response<proto::Void>, tonic::Status> {
         let msg = request.into_inner();
         let from_id = msg.from;
         let to_id = msg.to;
@@ -827,13 +812,13 @@ impl Rpc for RpcService {
         let msg = messages::Message::with(from_id, to_id, messages::PaxosMsg::Accepted(acc));
         let server = self.server.clone();
         server.recv_msg(msg);
-        Ok(Response::new(ProtoVoid {}))
+        Ok(Response::new(proto::Void {}))
     }
 
     async fn decide_message(
         &self,
-        request: Request<ProtoDecide>,
-    ) -> Result<Response<ProtoVoid>, tonic::Status> {
+        request: Request<proto::Decide>,
+    ) -> Result<Response<proto::Void>, tonic::Status> {
         let msg = request.into_inner();
         let from_id = msg.from;
         let to_id = msg.to;
@@ -844,13 +829,13 @@ impl Rpc for RpcService {
         let msg = messages::Message::with(from_id, to_id, messages::PaxosMsg::Decide(dec));
         let server = self.server.clone();
         server.recv_msg(msg);
-        Ok(Response::new(ProtoVoid {}))
+        Ok(Response::new(proto::Void {}))
     }
 
     async fn proposal_forward_message(
         &self,
-        request: Request<ProtoProposalForward>,
-    ) -> Result<Response<ProtoVoid>, tonic::Status> {
+        request: Request<proto::ProposalForward>,
+    ) -> Result<Response<proto::Void>, tonic::Status> {
         let msg = request.into_inner();
         let from_id = msg.from;
         let to_id = msg.to;
@@ -865,13 +850,13 @@ impl Rpc for RpcService {
         let msg = messages::Message::with(from_id, to_id, prop_for);
         let server = self.server.clone();
         server.recv_msg(msg);
-        Ok(Response::new(ProtoVoid {}))
+        Ok(Response::new(proto::Void {}))
     }
 
     async fn compaction_message(
         &self,
-        request: Request<ProtoCompaction>,
-    ) -> Result<Response<ProtoVoid>, tonic::Status> {
+        request: Request<proto::Compaction>,
+    ) -> Result<Response<proto::Void>, tonic::Status> {
         let msg = request.into_inner();
         let from_id = msg.from;
         let to_id = msg.to;
@@ -881,13 +866,13 @@ impl Rpc for RpcService {
         let msg = messages::Message::with(from_id, to_id, com);
         let server = self.server.clone();
         server.recv_msg(msg);
-        Ok(Response::new(ProtoVoid {}))
+        Ok(Response::new(proto::Void {}))
     }
 
     async fn forward_compaction_message(
         &self,
-        request: Request<ProtoForwardCompaction>,
-    ) -> Result<Response<ProtoVoid>, tonic::Status> {
+        request: Request<proto::ForwardCompaction>,
+    ) -> Result<Response<proto::Void>, tonic::Status> {
         let msg = request.into_inner();
         let from_id = msg.from;
         let to_id = msg.to;
@@ -897,13 +882,13 @@ impl Rpc for RpcService {
         let msg = messages::Message::with(from_id, to_id, com);
         let server = self.server.clone();
         server.recv_msg(msg);
-        Ok(Response::new(ProtoVoid {}))
+        Ok(Response::new(proto::Void {}))
     }
 
     async fn accept_stop_sign_message(
         &self,
-        request: Request<ProtoAcceptStopSign>,
-    ) -> Result<Response<ProtoVoid>, tonic::Status> {
+        request: Request<proto::AcceptStopSign>,
+    ) -> Result<Response<proto::Void>, tonic::Status> {
         let msg = request.into_inner();
         let from_id = msg.from;
         let to_id = msg.to;
@@ -916,13 +901,13 @@ impl Rpc for RpcService {
             messages::Message::with(from_id, to_id, messages::PaxosMsg::AcceptStopSign(acc_ss));
         let server = self.server.clone();
         server.recv_msg(msg);
-        Ok(Response::new(ProtoVoid {}))
+        Ok(Response::new(proto::Void {}))
     }
 
     async fn accepted_stop_sign_message(
         &self,
-        request: Request<ProtoAcceptedStopSign>,
-    ) -> Result<Response<ProtoVoid>, tonic::Status> {
+        request: Request<proto::AcceptedStopSign>,
+    ) -> Result<Response<proto::Void>, tonic::Status> {
         let msg = request.into_inner();
         let from_id = msg.from;
         let to_id = msg.to;
@@ -936,13 +921,13 @@ impl Rpc for RpcService {
         );
         let server = self.server.clone();
         server.recv_msg(msg);
-        Ok(Response::new(ProtoVoid {}))
+        Ok(Response::new(proto::Void {}))
     }
 
     async fn decide_stop_sign_message(
         &self,
-        request: Request<ProtoDecideStopSign>,
-    ) -> Result<Response<ProtoVoid>, tonic::Status> {
+        request: Request<proto::DecideStopSign>,
+    ) -> Result<Response<proto::Void>, tonic::Status> {
         let msg = request.into_inner();
         let from_id = msg.from;
         let to_id = msg.to;
@@ -953,13 +938,13 @@ impl Rpc for RpcService {
             messages::Message::with(from_id, to_id, messages::PaxosMsg::DecideStopSign(dec_ss));
         let server = self.server.clone();
         server.recv_msg(msg);
-        Ok(Response::new(ProtoVoid {}))
+        Ok(Response::new(proto::Void {}))
     }
 
     async fn heartbeat_request_message(
         &self,
-        request: Request<ProtoHeartbeatRequest>,
-    ) -> Result<Response<ProtoVoid>, tonic::Status> {
+        request: Request<proto::HeartbeatRequest>,
+    ) -> Result<Response<proto::Void>, tonic::Status> {
         let msg = request.into_inner();
         let from_id = msg.from;
         let to_id = msg.to;
@@ -972,13 +957,13 @@ impl Rpc for RpcService {
         );
         let server = self.server.clone();
         server.recv_ble_msg(msg);
-        Ok(Response::new(ProtoVoid {}))
+        Ok(Response::new(proto::Void {}))
     }
 
     async fn heartbeat_reply_message(
         &self,
-        request: Request<ProtoHeartbeatReply>,
-    ) -> Result<Response<ProtoVoid>, tonic::Status> {
+        request: Request<proto::HeartbeatReply>,
+    ) -> Result<Response<proto::Void>, tonic::Status> {
         let msg = request.into_inner();
         let from_id = msg.from;
         let to_id = msg.to;
@@ -994,6 +979,6 @@ impl Rpc for RpcService {
         );
         let server = self.server.clone();
         server.recv_ble_msg(msg);
-        Ok(Response::new(ProtoVoid {}))
+        Ok(Response::new(proto::Void {}))
     }
 }
