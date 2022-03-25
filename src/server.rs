@@ -340,7 +340,7 @@ impl<T: SequencePaxosStoreTransport + Send + Sync> StoreServer<T> {
             self.msg_rx.clone(),
             self.trans_rx.clone(),
             self.ble_rx.clone(),
-        );
+        )
     }
 
     pub async fn query<S: AsRef<str>>(

@@ -46,10 +46,13 @@ async fn main() -> Result<()> {
     let transport = RpcTransport::new(Box::new(node_rpc_addr));
     let server = StoreServer::start(opt.id as u64, peers, transport)?;
     let server = Arc::new(server);
-    let f = {
+
+    let q = {
         let server = server.clone();
-        tokio::task::spawn_blocking(move || {
+        tokio::task::spawn(async move {
+            println!("spawning q");
             server.run();
+            println!("q finished");
         })
     };
     let rpc = RpcService::new(server);
@@ -61,7 +64,8 @@ async fn main() -> Result<()> {
             .await;
         ret
     });
-    let results = tokio::try_join!(f, g)?;
+    let results = tokio::try_join!(q, g)?;
+    // let results = tokio::try_join!(r, b, s, g)?;
     results.1?;
     Ok(())
 }
