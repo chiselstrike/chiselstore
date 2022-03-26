@@ -5,7 +5,10 @@ use omnipaxos_core::{
     ballot_leader_election as ble, messages,
     sequence_paxos::{SequencePaxos, SequencePaxosConfig},
 };
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use std::{thread::sleep, time::Duration};
 
 #[derive(Derivative)]
@@ -18,7 +21,7 @@ pub struct SequencePaxosReplica<T: SequencePaxosStoreTransport + Send + Sync> {
     seq_paxos: Arc<Mutex<SequencePaxos<StoreCommand, (), Store<()>>>>,
     #[derivative(Debug = "ignore")]
     ble: Arc<Mutex<ble::BallotLeaderElection>>,
-    halt: Arc<Mutex<bool>>,
+    halt: Arc<Mutex<AtomicBool>>,
 }
 
 impl<T: SequencePaxosStoreTransport + Send + Sync> SequencePaxosReplica<T> {
@@ -42,7 +45,7 @@ impl<T: SequencePaxosStoreTransport + Send + Sync> SequencePaxosReplica<T> {
 
         let seq_paxos = Arc::new(Mutex::new(SequencePaxos::with(sp_config, store)));
         let ble = Arc::new(Mutex::new(ble::BallotLeaderElection::with(ble_config)));
-        let halt = Arc::new(Mutex::new(false));
+        let halt = Arc::new(Mutex::new(AtomicBool::new(false)));
 
         Self {
             id,
@@ -61,14 +64,13 @@ impl<T: SequencePaxosStoreTransport + Send + Sync> SequencePaxosReplica<T> {
         recv_ballot: Receiver<ble::messages::BLEMessage>,
     ) {
         loop {
-            if *self.halt.lock().unwrap() {
+            if self.halt.lock().unwrap().load(Ordering::Relaxed) {
                 break;
             }
 
             let mut seq_paxos = self.seq_paxos.lock().unwrap();
             let mut ble = self.ble.lock().unwrap();
 
-            println!("before tick -> ");
             if let Some(leader) = ble.tick() {
                 seq_paxos.handle_leader(leader);
             }
@@ -100,8 +102,14 @@ impl<T: SequencePaxosStoreTransport + Send + Sync> SequencePaxosReplica<T> {
         }
     }
 
-    pub fn halt(&self, val: bool) {
+    pub fn halt(&mut self, val: bool) {
         let mut halt = self.halt.lock().unwrap();
-        *halt = val;
+        let halt = halt.get_mut();
+        *halt = val
+    }
+
+    pub fn get_cluster_leader(&mut self) -> u64 {
+        let seq_paxos = self.seq_paxos.lock().unwrap();
+        seq_paxos.get_current_leader()
     }
 }

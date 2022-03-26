@@ -44,17 +44,18 @@ async fn main() -> Result<()> {
     let (host, port) = node_authority(opt.id);
     let rpc_listen_addr = format!("{}:{}", host, port).parse().unwrap();
     let transport = RpcTransport::new(Box::new(node_rpc_addr));
-    let server = StoreServer::start(opt.id as u64, peers, transport)?;
+    let server = StoreServer::start(opt.id as u64, peers, transport).unwrap();
     let server = Arc::new(server);
 
-    let q = {
+    let s = {
         let server = server.clone();
         tokio::task::spawn(async move {
-            println!("spawning q");
+            println!("spawning s");
             server.run();
-            println!("q finished");
+            println!("s finished");
         })
     };
+
     let rpc = RpcService::new(server);
     let g = tokio::task::spawn(async move {
         println!("RPC listening to {} ...", rpc_listen_addr);
@@ -64,8 +65,7 @@ async fn main() -> Result<()> {
             .await;
         ret
     });
-    let results = tokio::try_join!(q, g)?;
-    // let results = tokio::try_join!(r, b, s, g)?;
+    let results = tokio::try_join!(s, g)?;
     results.1?;
     Ok(())
 }

@@ -296,7 +296,7 @@ pub struct StoreServer<T: SequencePaxosStoreTransport + Send + Sync> {
     trans_tx: Sender<StoreCommand>,
 }
 
-const HEARTBEAT_DELAY: u64 = 10;
+const HEARTBEAT_DELAY: u64 = 25;
 const CONN_POOL_SIZE: usize = 20;
 
 impl<T: SequencePaxosStoreTransport + Send + Sync> StoreServer<T> {
@@ -395,6 +395,15 @@ impl<T: SequencePaxosStoreTransport + Send + Sync> StoreServer<T> {
 
     pub fn recv_ble_msg(&self, ble_msg: ble::messages::BLEMessage) {
         self.ble_tx.send(ble_msg).unwrap();
+    }
+
+    pub fn halt(&mut self, val: bool) {
+        self.sp_replica.lock().unwrap().halt(val);
+    }
+
+    pub fn get_leader(&self) -> u64 {
+        let mut sp_replica = self.sp_replica.lock().unwrap();
+        sp_replica.get_cluster_leader()
     }
 }
 
