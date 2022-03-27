@@ -1,5 +1,4 @@
 pub mod errors;
-pub mod replica;
 pub mod rpc;
 pub mod server;
 

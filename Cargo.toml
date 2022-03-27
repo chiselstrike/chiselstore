@@ -16,7 +16,7 @@ prost = "0.8.0"
 sqlite = "0.26.0"
 thiserror = "1.0.30"
 tokio = { version = "1.11.0", features = ["full"] }
-omnipaxos_core = { git = "https://github.com/haraldng/omnipaxos#534e1cb1" }
+omnipaxos_core = { git = "https://github.com/baawa/omnipaxos" }
 tonic = "0.5.2"
 
 [build-dependencies]

@@ -1,13 +1,11 @@
 //! ChiselStore server module.
 
 use crate::errors::StoreError;
-use crate::replica::SequencePaxosReplica;
 use async_notify::Notify;
 use async_trait::async_trait;
-use crossbeam_channel as channel;
-use crossbeam_channel::{Receiver, Sender};
 use derivative::Derivative;
 use omnipaxos_core::ballot_leader_election::Ballot;
+use omnipaxos_core::sequence_paxos::{SequencePaxos, SequencePaxosConfig};
 use omnipaxos_core::storage::Storage;
 use omnipaxos_core::{
     ballot_leader_election as ble, messages,
@@ -17,6 +15,7 @@ use sqlite::{Connection, OpenFlags};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::{thread::sleep, time::Duration};
 
 #[derive(Debug)]
 pub struct QueryRow {
@@ -284,63 +283,105 @@ where
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub struct StoreServer<T: SequencePaxosStoreTransport + Send + Sync> {
+    id: u64,
+    transport: Arc<T>,
     next_cmd_id: AtomicU64,
-    sp_replica: Arc<Mutex<SequencePaxosReplica<T>>>,
+    #[derivative(Debug = "ignore")]
+    seq_paxos: Arc<Mutex<SequencePaxos<StoreCommand, (), Store<()>>>>,
+    #[derivative(Debug = "ignore")]
+    ble: Arc<Mutex<ble::BallotLeaderElection>>,
     sqlite_connection: Arc<Mutex<SQLiteConnection>>,
     query_result_notifier: Arc<Mutex<ResultNotifier>>,
-    msg_rx: Receiver<messages::Message<StoreCommand, ()>>,
-    msg_tx: Sender<messages::Message<StoreCommand, ()>>,
-    ble_rx: Receiver<ble::messages::BLEMessage>,
-    ble_tx: Sender<ble::messages::BLEMessage>,
-    trans_rx: Receiver<StoreCommand>,
-    trans_tx: Sender<StoreCommand>,
+    halt: Arc<Mutex<bool>>,
 }
 
-const HEARTBEAT_DELAY: u64 = 25;
+const HEARTBEAT_DELAY: u64 = 10;
 const CONN_POOL_SIZE: usize = 20;
 
 impl<T: SequencePaxosStoreTransport + Send + Sync> StoreServer<T> {
-    pub fn start(thid_id: u64, peers: Vec<u64>, transport: T) -> Result<Self, StoreError> {
+    pub fn start(id: u64, peers: Vec<u64>, transport: T) -> Result<Self, StoreError> {
         let config = StoreConfig {
             conn_pool_size: CONN_POOL_SIZE,
         };
         let config_id = 1;
-        let (msg_tx, msg_rx) = channel::unbounded::<messages::Message<StoreCommand, ()>>();
-        let (ble_tx, ble_rx) = channel::unbounded::<ble::messages::BLEMessage>();
-        let (trans_tx, trans_rx) = channel::unbounded::<StoreCommand>();
-        let query_result_notifier = Arc::new(Mutex::new(ResultNotifier::new()));
-        let sqlite_connection = Arc::new(Mutex::new(SQLiteConnection::new(thid_id, config)));
-        let store = Store::new(sqlite_connection.clone(), query_result_notifier.clone());
 
-        let sp_replica = Arc::new(Mutex::new(SequencePaxosReplica::new(
-            thid_id,
-            peers,
-            HEARTBEAT_DELAY,
-            transport,
-            config_id,
-            store,
-        )));
+        let mut sp_config = SequencePaxosConfig::default();
+        sp_config.set_configuration_id(config_id);
+        sp_config.set_pid(id);
+        sp_config.set_peers(peers.clone());
+
+        let mut ble_config = ble::BLEConfig::default();
+        ble_config.set_pid(id);
+        ble_config.set_peers(peers);
+        ble_config.set_hb_delay(HEARTBEAT_DELAY);
+
+        let sqlite_connection = Arc::new(Mutex::new(SQLiteConnection::new(id, config)));
+        let query_result_notifier = Arc::new(Mutex::new(ResultNotifier::new()));
+        let store = Store::new(sqlite_connection.clone(), query_result_notifier.clone());
+        let seq_paxos = Arc::new(Mutex::new(SequencePaxos::with(sp_config, store)));
+        let ble = Arc::new(Mutex::new(ble::BallotLeaderElection::with(ble_config)));
+        let halt = Arc::new(Mutex::new(false));
 
         Ok(StoreServer {
+            id,
+            transport: Arc::new(transport),
             next_cmd_id: AtomicU64::new(1),
-            sp_replica,
+            seq_paxos,
+            ble,
             sqlite_connection,
             query_result_notifier,
-            msg_tx,
-            msg_rx,
-            ble_tx,
-            ble_rx,
-            trans_tx,
-            trans_rx,
+            halt,
         })
     }
 
-    pub fn run(&self) {
-        self.sp_replica.lock().unwrap().start(
-            self.msg_rx.clone(),
-            self.trans_rx.clone(),
-            self.ble_rx.clone(),
-        )
+    pub fn start_msg_event_loop(&self) {
+        loop {
+            if *self.halt.lock().unwrap() {
+                break;
+            }
+
+            let mut seq_paxos = self.seq_paxos.lock().unwrap();
+            let mut ble = self.ble.lock().unwrap();
+
+            for out_msg in seq_paxos.get_outgoing_msgs() {
+                self.transport.send_paxos_message(out_msg);
+            }
+
+            for out_ble_msg in ble.get_outgoing_msgs() {
+                self.transport.send_ble_message(out_ble_msg);
+            }
+
+            sleep(Duration::from_millis(1));
+        }
+    }
+
+    pub fn start_ble_event_loop(&self) {
+        loop {
+            if *self.halt.lock().unwrap() {
+                break;
+            }
+
+            let mut seq_paxos = self.seq_paxos.lock().unwrap();
+            let mut ble = self.ble.lock().unwrap();
+
+            if let Some(leader) = ble.tick() {
+                seq_paxos.handle_leader(leader);
+            }
+
+            std::mem::drop(seq_paxos);
+            std::mem::drop(ble);
+            sleep(Duration::from_millis(100));
+        }
+    }
+
+    pub fn get_cluster_leader(&self) -> u64 {
+        let seq_paxos = self.seq_paxos.lock().unwrap();
+        seq_paxos.get_current_leader()
+    }
+
+    pub fn halt(&self, val: bool) {
+        let mut halt = self.halt.lock().unwrap();
+        *halt = val
     }
 
     pub async fn query<S: AsRef<str>>(
@@ -357,6 +398,7 @@ impl<T: SequencePaxosStoreTransport + Send + Sync> StoreServer<T> {
         let results = match consistency {
             Consistency::Strong => {
                 let (notify, id) = {
+                    let mut seq_paxos = self.seq_paxos.lock().unwrap();
                     let mut query_result_notifier = self.query_result_notifier.lock().unwrap();
                     let id = self.next_cmd_id.fetch_add(1, Ordering::SeqCst);
                     let cmd = StoreCommand {
@@ -365,7 +407,7 @@ impl<T: SequencePaxosStoreTransport + Send + Sync> StoreServer<T> {
                     };
                     let notify = Arc::new(Notify::new());
                     query_result_notifier.add_command(id, notify.clone());
-                    self.trans_tx.send(cmd).unwrap();
+                    seq_paxos.append(cmd).unwrap();
                     (notify, id)
                 };
 
@@ -390,20 +432,13 @@ impl<T: SequencePaxosStoreTransport + Send + Sync> StoreServer<T> {
     }
 
     pub fn recv_msg(&self, msg: messages::Message<StoreCommand, ()>) {
-        self.msg_tx.send(msg).unwrap();
+        let mut seq_paxos = self.seq_paxos.lock().unwrap();
+        seq_paxos.handle(msg);
     }
 
     pub fn recv_ble_msg(&self, ble_msg: ble::messages::BLEMessage) {
-        self.ble_tx.send(ble_msg).unwrap();
-    }
-
-    pub fn halt(&mut self, val: bool) {
-        self.sp_replica.lock().unwrap().halt(val);
-    }
-
-    pub fn get_leader(&self) -> u64 {
-        let mut sp_replica = self.sp_replica.lock().unwrap();
-        sp_replica.get_cluster_leader()
+        let mut ble = self.ble.lock().unwrap();
+        ble.handle(ble_msg)
     }
 }
 

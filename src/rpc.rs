@@ -126,6 +126,7 @@ fn get_proto_sync_item(syncitem: util::SyncItem<StoreCommand, ()>) -> proto::Syn
             )),
         },
         util::SyncItem::Snapshot(_) => proto::SyncItem {
+            // not implemented for snapshot
             syncitem: Some(proto::sync_item::Syncitem::Snapshot(true)),
         },
         util::SyncItem::None => proto::SyncItem {
@@ -175,7 +176,9 @@ impl SequencePaxosStoreTransport for RpcTransport {
             messages::PaxosMsg::PrepareReq => {
                 let from = msg.from;
                 let to = msg.to;
+
                 let request = proto::PrepareReq { from, to };
+
                 let peer = (self.node_addr)(to as usize);
                 let pool = self.connections.clone();
                 tokio::task::spawn(async move {
@@ -378,6 +381,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
             messages::PaxosMsg::ProposalForward(props) => {
                 let from = msg.from;
                 let to = msg.to;
+
                 let proposals = props
                     .into_iter()
                     .map(|prop| get_proto_entry(prop))
@@ -401,6 +405,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
             messages::PaxosMsg::Compaction(comps) => {
                 let from = msg.from;
                 let to = msg.to;
+
                 let compaction = Some(get_proto_compaction(comps));
                 let request = proto::Compaction {
                     from,
@@ -528,8 +533,8 @@ impl SequencePaxosStoreTransport for RpcTransport {
             ble::messages::HeartbeatMsg::Reply(reply) => {
                 let from = ble_msg.from;
                 let to = ble_msg.to;
-                let round = reply.round;
 
+                let round = reply.round;
                 let ballot = Some(get_proto_ballot(reply.ballot));
                 let majority_connected = reply.majority_connected;
                 let request = proto::HeartbeatReply {
