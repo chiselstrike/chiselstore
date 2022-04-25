@@ -47,12 +47,17 @@ async fn main() -> Result<()> {
     let server = StoreServer::start(opt.id as u64, peers, transport).unwrap();
     let server = Arc::new(server);
 
-    let s = {
+    let m = {
         let server = server.clone();
         tokio::task::spawn(async move {
-            println!("spawning s");
-            server.run();
-            println!("s finished");
+            server.start_msg_event_loop();
+        })
+    };
+
+    let b = {
+        let server = server.clone();
+        tokio::task::spawn(async move {
+            server.start_ble_event_loop();
         })
     };
 
@@ -65,7 +70,7 @@ async fn main() -> Result<()> {
             .await;
         ret
     });
-    let results = tokio::try_join!(s, g)?;
-    results.1?;
+    let results = tokio::try_join!(m, b, g)?;
+    results.2?;
     Ok(())
 }

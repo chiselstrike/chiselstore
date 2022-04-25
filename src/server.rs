@@ -95,7 +95,7 @@ pub struct SQLiteConnection {
 }
 
 impl SQLiteConnection {
-    pub(in crate::server) fn new(this_id: u64, config: StoreConfig) -> Self {
+    fn new(this_id: u64, config: StoreConfig) -> Self {
         let mut conn_pool = vec![];
         let conn_pool_size = config.conn_pool_size;
         for _ in 0..conn_pool_size {
@@ -115,7 +115,7 @@ impl SQLiteConnection {
         }
     }
 
-    pub fn get_connection(&mut self) -> Arc<Mutex<Connection>> {
+    fn get_connection(&mut self) -> Arc<Mutex<Connection>> {
         let idx = self.conn_idx % self.conn_pool.len();
         let conn = &self.conn_pool[idx];
         self.conn_idx += 1;
@@ -182,10 +182,7 @@ impl<S: Snapshot<StoreCommand>> Store<S> {
     }
 }
 
-impl<S> Storage<StoreCommand, S> for Store<S>
-where
-    S: Snapshot<StoreCommand>,
-{
+impl<S: Snapshot<StoreCommand>> Storage<StoreCommand, S> for Store<S> {
     fn append_entry(&mut self, entry: StoreCommand) -> u64 {
         self.log.push(entry);
         self.get_log_len()
@@ -295,7 +292,7 @@ pub struct StoreServer<T: SequencePaxosStoreTransport + Send + Sync> {
     halt: Arc<Mutex<bool>>,
 }
 
-const HEARTBEAT_DELAY: u64 = 10;
+const HEARTBEAT_DELAY: u64 = 190;
 const CONN_POOL_SIZE: usize = 20;
 
 impl<T: SequencePaxosStoreTransport + Send + Sync> StoreServer<T> {
@@ -336,6 +333,8 @@ impl<T: SequencePaxosStoreTransport + Send + Sync> StoreServer<T> {
 
     pub fn start_msg_event_loop(&self) {
         loop {
+            sleep(Duration::from_millis(1));
+
             if *self.halt.lock().unwrap() {
                 break;
             }
@@ -350,13 +349,13 @@ impl<T: SequencePaxosStoreTransport + Send + Sync> StoreServer<T> {
             for out_ble_msg in ble.get_outgoing_msgs() {
                 self.transport.send_ble_message(out_ble_msg);
             }
-
-            sleep(Duration::from_millis(1));
         }
     }
 
     pub fn start_ble_event_loop(&self) {
         loop {
+            sleep(Duration::from_millis(10));
+
             if *self.halt.lock().unwrap() {
                 break;
             }
@@ -367,10 +366,6 @@ impl<T: SequencePaxosStoreTransport + Send + Sync> StoreServer<T> {
             if let Some(leader) = ble.tick() {
                 seq_paxos.handle_leader(leader);
             }
-
-            std::mem::drop(seq_paxos);
-            std::mem::drop(ble);
-            sleep(Duration::from_millis(100));
         }
     }
 

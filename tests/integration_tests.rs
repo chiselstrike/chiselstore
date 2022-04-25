@@ -3,6 +3,7 @@ use chiselstore::{
     rpc::{RpcService, RpcTransport},
     StoreServer,
 };
+use futures_util::FutureExt;
 use std::sync::Arc;
 
 pub mod proto {
@@ -32,6 +33,7 @@ pub struct SPReplica {
     store_server_msg_event_handler: tokio::task::JoinHandle<()>,
     store_server_ble_handler: tokio::task::JoinHandle<()>,
     rpc_handler: tokio::task::JoinHandle<()>,
+    rpc_tx: oneshot::Sender<()>,
 }
 
 pub fn make_cluster(nr: u64) -> Vec<SPReplica> {
@@ -39,15 +41,13 @@ pub fn make_cluster(nr: u64) -> Vec<SPReplica> {
     let cluster_ids: Vec<u64> = (1..(nr + 1)).collect();
 
     for i in 1..(nr + 1) {
-        let mut peers = Vec::new();
-        cluster_ids.clone().into_iter().for_each(|id| {
-            if (i as u64) != id {
-                println!("i {} - id {}", i, id);
-                peers.push(id);
-            }
-        });
+        let peers: Vec<u64> = cluster_ids
+            .clone()
+            .into_iter()
+            .filter(|peer_id| (*peer_id != i))
+            .collect();
+        assert_eq!(peers.len(), (nr - 1) as usize);
 
-        println!("replica {}", i);
         let sp_replica = SPReplica::new(i as u64, peers);
         cluster.push(sp_replica);
     }
@@ -68,6 +68,7 @@ pub async fn execute_query(replica_id: u64, stmt: String, consistency: Consisten
     for res in response.rows {
         rows.extend(res.values);
     }
+
     rows
 }
 
@@ -91,11 +92,11 @@ impl SPReplica {
         });
 
         let rpc = RpcService::new(server.clone());
+        let (rpc_tx, rpc_rx) = oneshot::channel::<()>();
         let rpc_handler = tokio::task::spawn(async move {
-            println!("RPC listening to {} ...", rpc_listen_addr);
             let ret = Server::builder()
                 .add_service(RpcServer::new(rpc))
-                .serve(rpc_listen_addr)
+                .serve_with_shutdown(rpc_listen_addr, rpc_rx.map(drop))
                 .await;
             ret.unwrap()
         });
@@ -113,6 +114,7 @@ impl SPReplica {
             store_server_msg_event_handler,
             store_server_ble_handler,
             rpc_handler,
+            rpc_tx,
         }
     }
 
@@ -126,6 +128,7 @@ impl SPReplica {
         self.halt_sender.send(()).unwrap();
         self.store_server_msg_event_handler.await.unwrap();
         self.store_server_ble_handler.await.unwrap();
+        self.rpc_tx.send(()).unwrap();
         self.rpc_handler.await.unwrap();
     }
 
@@ -136,11 +139,10 @@ impl SPReplica {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_database_connection() {
-    let cluster = make_cluster(3);
+    let cluster = make_cluster(2);
 
-    tokio::task::spawn(async move {
+    tokio::task::spawn(async {
         let response = execute_query(1, String::from("SELECT 1"), Consistency::RelaxedReads).await;
-
         assert_eq!(response.len(), 1);
         assert_eq!(response[0], "1");
     })
@@ -157,16 +159,18 @@ async fn test_consistency_relaxed() {
     let cluster = make_cluster(3);
 
     let replica_one = tokio::task::spawn(async {
+        println!("---- CREATE TABLE ----");
         execute_query(
             1,
-            String::from("CREATE TABLE IF NOT EXISTS test_consistency (i integer PRIMARY KEY)"),
+            String::from("CREATE TABLE IF NOT EXISTS test_consistency (i integer PRIMARY KEY);"),
             Consistency::RelaxedReads,
         )
         .await;
 
+        println!("---- INSERT ----");
         execute_query(
             1,
-            String::from("INSERT INTO test_consistency VALUES(50)"),
+            String::from("INSERT INTO test_consistency VALUES(50);"),
             Consistency::RelaxedReads,
         )
         .await;
@@ -176,24 +180,28 @@ async fn test_consistency_relaxed() {
 
     let res_one = execute_query(
         1,
-        String::from("SELECT i FROM test_consistency"),
+        String::from("SELECT i FROM test_consistency;"),
         Consistency::RelaxedReads,
     )
     .await;
 
+    println!("res_one -> {:?}", res_one);
     let res_two = execute_query(
         2,
-        String::from("SELECT i FROM test_consistency"),
+        String::from("SELECT i FROM test_consistency;"),
         Consistency::RelaxedReads,
     )
     .await;
 
+    println!("res_two -> {:?}", res_two);
     let res_three = execute_query(
         3,
-        String::from("SELECT i FROM test_consistency"),
+        String::from("SELECT i FROM test_consistency;"),
         Consistency::RelaxedReads,
     )
     .await;
+
+    println!("res_three -> {:?}", res_three);
 
     assert_eq!(res_one.len(), 1);
     assert_eq!(res_two.len(), 1);
@@ -202,6 +210,7 @@ async fn test_consistency_relaxed() {
     assert_eq!(res_one[0], res_three[0]);
 
     for c in cluster {
+        println!("{} -> halting", c.get_replica_id());
         c.halt_replica().await;
     }
 }

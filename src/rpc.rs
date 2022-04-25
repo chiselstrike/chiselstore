@@ -98,12 +98,12 @@ impl RpcTransport {
 
 // Helping functions to get proto buffers from paxos or ble structs
 
-fn get_proto_ballot(ballot: ble::Ballot) -> proto::Ballot {
-    proto::Ballot {
+fn get_proto_ballot(ballot: ble::Ballot) -> Option<proto::Ballot> {
+    Some(proto::Ballot {
         n: ballot.n,
         priority: ballot.priority,
         pid: ballot.pid,
-    }
+    })
 }
 
 fn get_proto_entry(cmd: StoreCommand) -> proto::Entry {
@@ -113,9 +113,9 @@ fn get_proto_entry(cmd: StoreCommand) -> proto::Entry {
     }
 }
 
-fn get_proto_sync_item(syncitem: util::SyncItem<StoreCommand, ()>) -> proto::SyncItem {
+fn get_proto_sync_item(syncitem: util::SyncItem<StoreCommand, ()>) -> Option<proto::SyncItem> {
     match syncitem {
-        util::SyncItem::Entries(entries) => proto::SyncItem {
+        util::SyncItem::Entries(entries) => Some(proto::SyncItem {
             syncitem: Some(proto::sync_item::Syncitem::Entries(
                 proto::sync_item::Entries {
                     entries: entries
@@ -124,29 +124,29 @@ fn get_proto_sync_item(syncitem: util::SyncItem<StoreCommand, ()>) -> proto::Syn
                         .collect(),
                 },
             )),
-        },
-        util::SyncItem::Snapshot(_) => proto::SyncItem {
+        }),
+        util::SyncItem::Snapshot(_) => Some(proto::SyncItem {
             // not implemented for snapshot
             syncitem: Some(proto::sync_item::Syncitem::Snapshot(true)),
-        },
-        util::SyncItem::None => proto::SyncItem {
+        }),
+        util::SyncItem::None => Some(proto::SyncItem {
             syncitem: Some(proto::sync_item::Syncitem::None(true)),
-        },
+        }),
     }
 }
 
-fn get_proto_stop_sign(stopsign: storage::StopSign) -> proto::StopSign {
+fn get_proto_stop_sign(stopsign: storage::StopSign) -> Option<proto::StopSign> {
     let config_id = stopsign.config_id;
     let nodes = stopsign.nodes;
     let metadata = match stopsign.metadata {
         Some(meta) => meta.into_iter().map(|m| m as u32).collect(),
         _ => Vec::new(),
     };
-    proto::StopSign {
+    Some(proto::StopSign {
         config_id,
         nodes,
         metadata,
-    }
+    })
 }
 
 fn get_proto_compaction(compaction: messages::Compaction) -> proto::compaction::Compaction {
@@ -192,9 +192,9 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 let from = msg.from;
                 let to = msg.to;
 
-                let n = Some(get_proto_ballot(prep.n));
+                let n = get_proto_ballot(prep.n);
                 let ld = prep.ld;
-                let n_accepted = Some(get_proto_ballot(prep.n_accepted));
+                let n_accepted = get_proto_ballot(prep.n_accepted);
                 let la = prep.la;
                 let request = proto::Prepare {
                     from,
@@ -217,11 +217,11 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 let from = msg.from;
                 let to = msg.to;
 
-                let n = Some(get_proto_ballot(prom.n));
-                let n_accepted = Some(get_proto_ballot(prom.n_accepted));
+                let n = get_proto_ballot(prom.n);
+                let n_accepted = get_proto_ballot(prom.n_accepted);
                 let sync_item = prom.sync_item;
                 let sync_item = match sync_item {
-                    Some(sync_item) => Some(get_proto_sync_item(sync_item)),
+                    Some(sync_item) => get_proto_sync_item(sync_item),
                     _ => None,
                 };
                 let ld = prom.ld;
@@ -229,7 +229,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
 
                 let stopsign = prom.stopsign;
                 let stopsign = match stopsign {
-                    Some(stopsign) => Some(get_proto_stop_sign(stopsign)),
+                    Some(stopsign) => get_proto_stop_sign(stopsign),
                     _ => None,
                 };
 
@@ -256,16 +256,16 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 let from = msg.from;
                 let to = msg.to;
 
-                let n = Some(get_proto_ballot(acc_sync.n));
+                let n = get_proto_ballot(acc_sync.n);
 
                 let sync_item = acc_sync.sync_item;
-                let sync_item = Some(get_proto_sync_item(sync_item));
+                let sync_item = get_proto_sync_item(sync_item);
                 let sync_idx = acc_sync.sync_idx;
                 let decided_idx = acc_sync.decide_idx;
 
                 let stopsign = acc_sync.stopsign;
                 let stopsign = match stopsign {
-                    Some(stopsign) => Some(get_proto_stop_sign(stopsign)),
+                    Some(stopsign) => get_proto_stop_sign(stopsign),
                     _ => None,
                 };
 
@@ -292,7 +292,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 let from = msg.from;
                 let to = msg.to;
 
-                let n = Some(get_proto_ballot(f.n));
+                let n = get_proto_ballot(f.n);
                 let entries = f
                     .entries
                     .into_iter()
@@ -319,7 +319,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 let from = msg.from;
                 let to = msg.to;
 
-                let n = Some(get_proto_ballot(acc.n));
+                let n = get_proto_ballot(acc.n);
                 let ld = acc.ld;
                 let entries = acc
                     .entries
@@ -348,7 +348,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 let from = msg.from;
                 let to = msg.to;
 
-                let n = Some(get_proto_ballot(accepted.n));
+                let n = get_proto_ballot(accepted.n);
                 let la = accepted.la;
                 let request = proto::Accepted { from, to, n, la };
 
@@ -365,7 +365,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 let from = msg.from;
                 let to = msg.to;
 
-                let n = Some(get_proto_ballot(dec.n));
+                let n = get_proto_ballot(dec.n);
                 let ld = dec.ld;
                 let request = proto::Decide { from, to, n, ld };
 
@@ -450,9 +450,9 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 let from = msg.from;
                 let to = msg.to;
 
-                let n = Some(get_proto_ballot(acc_ss.n));
+                let n = get_proto_ballot(acc_ss.n);
                 let stopsign = acc_ss.ss;
-                let stopsign = Some(get_proto_stop_sign(stopsign));
+                let stopsign = get_proto_stop_sign(stopsign);
 
                 let request = proto::AcceptStopSign {
                     from,
@@ -474,7 +474,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 let from = msg.from;
                 let to = msg.to;
 
-                let n = Some(get_proto_ballot(acc_ss.n));
+                let n = get_proto_ballot(acc_ss.n);
                 let request = proto::AcceptedStopSign { from, to, n };
 
                 let peer = (self.node_addr)(to as usize);
@@ -494,7 +494,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 let from = msg.from;
                 let to = msg.to;
 
-                let n = Some(get_proto_ballot(d_ss.n));
+                let n = get_proto_ballot(d_ss.n);
                 let request = proto::DecideStopSign { from, to, n };
 
                 let peer = (self.node_addr)(to as usize);
@@ -535,7 +535,7 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 let to = ble_msg.to;
 
                 let round = reply.round;
-                let ballot = Some(get_proto_ballot(reply.ballot));
+                let ballot = get_proto_ballot(reply.ballot);
                 let majority_connected = reply.majority_connected;
                 let request = proto::HeartbeatReply {
                     from,
@@ -574,19 +574,19 @@ fn get_entry_from_proto(proto_entry: proto::Entry) -> StoreCommand {
     }
 }
 
-fn get_syncitem_from_proto(syncitem: proto::SyncItem) -> util::SyncItem<StoreCommand, ()> {
+fn get_syncitem_from_proto(syncitem: proto::SyncItem) -> Option<util::SyncItem<StoreCommand, ()>> {
     match syncitem.syncitem.unwrap() {
-        proto::sync_item::Syncitem::Entries(entries) => util::SyncItem::Entries(
+        proto::sync_item::Syncitem::Entries(entries) => Some(util::SyncItem::Entries(
             entries
                 .entries
                 .into_iter()
                 .map(|ent| get_entry_from_proto(ent))
                 .collect(),
-        ),
-        proto::sync_item::Syncitem::Snapshot(_) => {
-            util::SyncItem::Snapshot(storage::SnapshotType::Complete(()))
-        }
-        proto::sync_item::Syncitem::None(_) => util::SyncItem::None,
+        )),
+        proto::sync_item::Syncitem::Snapshot(_) => Some(util::SyncItem::Snapshot(
+            storage::SnapshotType::Complete(()),
+        )),
+        proto::sync_item::Syncitem::None(_) => Some(util::SyncItem::None),
     }
 }
 
@@ -706,7 +706,7 @@ impl Rpc for RpcService {
         let n_accepted = get_ballot_from_proto(msg.n_accepted.unwrap());
         let sync_item = msg.sync_item;
         let sync_item = match sync_item {
-            Some(sync_item) => Some(get_syncitem_from_proto(sync_item)),
+            Some(sync_item) => get_syncitem_from_proto(sync_item),
             _ => None,
         };
         let ld = msg.ld;
@@ -734,7 +734,7 @@ impl Rpc for RpcService {
 
         let n = get_ballot_from_proto(msg.n.unwrap());
         let sync_item = msg.sync_item;
-        let sync_item = get_syncitem_from_proto(sync_item.unwrap());
+        let sync_item = get_syncitem_from_proto(sync_item.unwrap()).unwrap();
         let sync_idx = msg.sync_idx;
         let decide_idx = msg.decided_idx;
         let stopsign = msg.stopsign;

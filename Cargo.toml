@@ -18,6 +18,7 @@ thiserror = "1.0.30"
 tokio = { version = "1.11.0", features = ["full"] }
 omnipaxos_core = { git = "https://github.com/baawa/omnipaxos" }
 tonic = "0.5.2"
+futures-util = "0.3.21"
 
 [build-dependencies]
 tonic-build = "0.5.2"
