@@ -184,7 +184,10 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 tokio::task::spawn(async move {
                     let mut client = pool.connection(peer).await;
                     let request = tonic::Request::new(request.clone());
-                    client.conn.prepare_request(request).await.unwrap();
+                    match client.conn.prepare_request(request).await {
+                        Ok(_) => {}
+                        Err(_) => println!("Peer {} halted", to),
+                    }
                 });
             }
 
@@ -209,7 +212,10 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 tokio::task::spawn(async move {
                     let mut client = pool.connection(peer).await;
                     let request = tonic::Request::new(request.clone());
-                    client.conn.prepare_message(request).await.unwrap();
+                    match client.conn.prepare_message(request).await {
+                        Ok(_) => {}
+                        Err(_) => println!("Peer {} halted", to),
+                    }
                 });
             }
 
@@ -248,7 +254,10 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 tokio::task::spawn(async move {
                     let mut client = pool.connection(peer).await;
                     let request = tonic::Request::new(request.clone());
-                    client.conn.promise_message(request).await.unwrap();
+                    match client.conn.promise_message(request).await {
+                        Ok(_) => {}
+                        Err(_) => println!("Peer {} halted", to),
+                    }
                 });
             }
 
@@ -284,7 +293,10 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 tokio::task::spawn(async move {
                     let mut client = pool.connection(peer).await;
                     let request = tonic::Request::new(request.clone());
-                    client.conn.accept_sync_message(request).await.unwrap();
+                    match client.conn.accept_sync_message(request).await {
+                        Ok(_) => {}
+                        Err(_) => println!("Peer {} halted", to),
+                    }
                 });
             }
 
@@ -311,7 +323,10 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 tokio::task::spawn(async move {
                     let mut client = pool.connection(peer).await;
                     let request = tonic::Request::new(request.clone());
-                    client.conn.first_accept_message(request).await.unwrap();
+                    match client.conn.first_accept_message(request).await {
+                        Ok(_) => {}
+                        Err(_) => println!("Peer {} halted", to),
+                    }
                 });
             }
 
@@ -340,7 +355,10 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 tokio::task::spawn(async move {
                     let mut client = pool.connection(peer).await;
                     let request = tonic::Request::new(request.clone());
-                    client.conn.accept_decide_message(request).await.unwrap();
+                    match client.conn.accept_decide_message(request).await {
+                        Ok(_) => {}
+                        Err(_) => println!("Peer {} halted", to),
+                    }
                 });
             }
 
@@ -357,7 +375,10 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 tokio::task::spawn(async move {
                     let mut client = pool.connection(peer).await;
                     let request = tonic::Request::new(request.clone());
-                    client.conn.accepted_message(request).await.unwrap();
+                    match client.conn.accepted_message(request).await {
+                        Ok(_) => {}
+                        Err(_) => println!("Peer {} halted", to),
+                    }
                 });
             }
 
@@ -374,7 +395,10 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 tokio::task::spawn(async move {
                     let mut client = pool.connection(peer).await;
                     let request = tonic::Request::new(request.clone());
-                    client.conn.decide_message(request).await.unwrap();
+                    match client.conn.decide_message(request).await {
+                        Ok(_) => {}
+                        Err(_) => println!("Peer {} halted", to),
+                    }
                 });
             }
 
@@ -398,7 +422,10 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 tokio::task::spawn(async move {
                     let mut client = pool.connection(peer).await;
                     let request = tonic::Request::new(request.clone());
-                    client.conn.proposal_forward_message(request).await.unwrap();
+                    match client.conn.proposal_forward_message(request).await {
+                        Ok(_) => {}
+                        Err(_) => println!("Peer {} halted", to),
+                    }
                 });
             }
 
@@ -418,7 +445,10 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 tokio::task::spawn(async move {
                     let mut client = pool.connection(peer).await;
                     let request = tonic::Request::new(request.clone());
-                    client.conn.compaction_message(request).await.unwrap();
+                    match client.conn.compaction_message(request).await {
+                        Ok(_) => {}
+                        Err(_) => println!("Peer {} halted", to),
+                    }
                 });
             }
 
@@ -438,11 +468,10 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 tokio::task::spawn(async move {
                     let mut client = pool.connection(peer).await;
                     let request = tonic::Request::new(request.clone());
-                    client
-                        .conn
-                        .forward_compaction_message(request)
-                        .await
-                        .unwrap();
+                    match client.conn.forward_compaction_message(request).await {
+                        Ok(_) => {}
+                        Err(_) => println!("Peer {} halted", to),
+                    }
                 });
             }
 
@@ -466,7 +495,10 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 tokio::task::spawn(async move {
                     let mut client = pool.connection(peer).await;
                     let request = tonic::Request::new(request.clone());
-                    client.conn.accept_stop_sign_message(request).await.unwrap();
+                    match client.conn.accept_stop_sign_message(request).await {
+                        Ok(_) => {}
+                        Err(_) => println!("Peer {} halted", to),
+                    }
                 });
             }
 
@@ -482,11 +514,10 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 tokio::task::spawn(async move {
                     let mut client = pool.connection(peer).await;
                     let request = tonic::Request::new(request.clone());
-                    client
-                        .conn
-                        .accepted_stop_sign_message(request)
-                        .await
-                        .unwrap();
+                    match client.conn.accepted_stop_sign_message(request).await {
+                        Ok(_) => {}
+                        Err(_) => println!("Peer {} halted", to),
+                    }
                 });
             }
 
@@ -502,7 +533,10 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 tokio::task::spawn(async move {
                     let mut client = pool.connection(peer).await;
                     let request = tonic::Request::new(request.clone());
-                    client.conn.decide_stop_sign_message(request).await.unwrap();
+                    match client.conn.decide_stop_sign_message(request).await {
+                        Ok(_) => {}
+                        Err(_) => println!("Peer {} halted", to),
+                    }
                 });
             }
         }
@@ -522,11 +556,10 @@ impl SequencePaxosStoreTransport for RpcTransport {
                 tokio::task::spawn(async move {
                     let mut client = pool.connection(peer).await;
                     let request = tonic::Request::new(request.clone());
-                    client
-                        .conn
-                        .heartbeat_request_message(request)
-                        .await
-                        .unwrap();
+                    match client.conn.heartbeat_request_message(request).await {
+                        Ok(_) => {}
+                        Err(_) => println!("Peer {} halted", to),
+                    }
                 });
             }
 
@@ -547,10 +580,14 @@ impl SequencePaxosStoreTransport for RpcTransport {
 
                 let peer = (self.node_addr)(to as usize);
                 let pool = self.connections.clone();
+
                 tokio::task::spawn(async move {
                     let mut client = pool.connection(peer).await;
                     let request = tonic::Request::new(request.clone());
-                    client.conn.heartbeat_reply_message(request).await.unwrap();
+                    match client.conn.heartbeat_reply_message(request).await {
+                        Ok(_) => {}
+                        Err(_) => println!("Peer {} halted", to),
+                    }
                 });
             }
         }

@@ -1,6 +1,7 @@
 //! ChiselStore server module.
 
 use crate::errors::StoreError;
+use crate::logger;
 use async_notify::Notify;
 use async_trait::async_trait;
 use derivative::Derivative;
@@ -11,6 +12,7 @@ use omnipaxos_core::{
     ballot_leader_election as ble, messages,
     storage::{Snapshot, StopSignEntry},
 };
+use slog::{info, Logger};
 use sqlite::{Connection, OpenFlags};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -144,6 +146,7 @@ pub struct Store<S>
 where
     S: Snapshot<StoreCommand>,
 {
+    store_id: u64,
     log: Vec<StoreCommand>,
     n_prom: Ballot,
     acc_round: Ballot,
@@ -158,10 +161,12 @@ where
 
 impl<S: Snapshot<StoreCommand>> Store<S> {
     pub fn new(
+        store_id: u64,
         sqlite_connection: Arc<Mutex<SQLiteConnection>>,
         query_result_notifier: Arc<Mutex<ResultNotifier>>,
     ) -> Self {
         Self {
+            store_id,
             log: Vec::new(),
             n_prom: ble::Ballot::default(),
             acc_round: ble::Ballot::default(),
@@ -174,7 +179,7 @@ impl<S: Snapshot<StoreCommand>> Store<S> {
         }
     }
 
-    pub fn apply_queries(&mut self, transition: StoreCommand) {
+    pub fn apply_queries(&self, transition: StoreCommand) {
         let mut query_result_notifier = self.query_result_notifier.lock().unwrap();
         let mut sqlite_connection = self.sqlite_connection.lock().unwrap();
         let results = sqlite_connection.query(transition.sql);
@@ -205,14 +210,10 @@ impl<S: Snapshot<StoreCommand>> Storage<StoreCommand, S> for Store<S> {
 
     fn set_decided_idx(&mut self, ld: u64) {
         let decided_entries = self.get_entries(self.ld, ld);
-        let mut tmp_vec = Vec::new();
+
         decided_entries
             .into_iter()
-            .for_each(|entry| tmp_vec.push(entry.clone()));
-
-        tmp_vec
-            .into_iter()
-            .for_each(|entry| self.apply_queries(entry));
+            .for_each(|entry| self.apply_queries(entry.clone()));
 
         self.ld = ld;
     }
@@ -283,6 +284,7 @@ pub struct StoreServer<T: SequencePaxosStoreTransport + Send + Sync> {
     id: u64,
     transport: Arc<T>,
     next_cmd_id: AtomicU64,
+    logger: Logger,
     #[derivative(Debug = "ignore")]
     seq_paxos: Arc<Mutex<SequencePaxos<StoreCommand, (), Store<()>>>>,
     #[derivative(Debug = "ignore")]
@@ -312,9 +314,10 @@ impl<T: SequencePaxosStoreTransport + Send + Sync> StoreServer<T> {
         ble_config.set_peers(peers);
         ble_config.set_hb_delay(HEARTBEAT_DELAY);
 
+        let logger = logger::create_logger();
         let sqlite_connection = Arc::new(Mutex::new(SQLiteConnection::new(id, config)));
         let query_result_notifier = Arc::new(Mutex::new(ResultNotifier::new()));
-        let store = Store::new(sqlite_connection.clone(), query_result_notifier.clone());
+        let store = Store::new(id, sqlite_connection.clone(), query_result_notifier.clone());
         let seq_paxos = Arc::new(Mutex::new(SequencePaxos::with(sp_config, store)));
         let ble = Arc::new(Mutex::new(ble::BallotLeaderElection::with(ble_config)));
         let halt = Arc::new(Mutex::new(false));
@@ -323,6 +326,7 @@ impl<T: SequencePaxosStoreTransport + Send + Sync> StoreServer<T> {
             id,
             transport: Arc::new(transport),
             next_cmd_id: AtomicU64::new(1),
+            logger,
             seq_paxos,
             ble,
             sqlite_connection,
@@ -332,6 +336,10 @@ impl<T: SequencePaxosStoreTransport + Send + Sync> StoreServer<T> {
     }
 
     pub fn start_msg_event_loop(&self) {
+        info!(
+            self.logger,
+            "Replica {} starting message event loop", self.id
+        );
         loop {
             sleep(Duration::from_millis(1));
 
@@ -353,6 +361,7 @@ impl<T: SequencePaxosStoreTransport + Send + Sync> StoreServer<T> {
     }
 
     pub fn start_ble_event_loop(&self) {
+        info!(self.logger, "Replica {} starting ble event loop", self.id);
         loop {
             sleep(Duration::from_millis(10));
 
@@ -393,6 +402,11 @@ impl<T: SequencePaxosStoreTransport + Send + Sync> StoreServer<T> {
         let results = match consistency {
             Consistency::Strong => {
                 let (notify, id) = {
+                    info!(
+                        self.logger,
+                        "Strong consistency query -> {}",
+                        stmt.as_ref().to_string()
+                    );
                     let mut seq_paxos = self.seq_paxos.lock().unwrap();
                     let mut query_result_notifier = self.query_result_notifier.lock().unwrap();
                     let id = self.next_cmd_id.fetch_add(1, Ordering::SeqCst);

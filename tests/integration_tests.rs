@@ -10,8 +10,10 @@ pub mod proto {
     tonic::include_proto!("proto");
 }
 
+use chiselstore::logger;
 use proto::rpc_client::RpcClient;
 use proto::{Consistency, Query};
+use slog::info;
 use std::net::SocketAddr;
 use tokio::sync::oneshot;
 use tonic::transport::Server;
@@ -26,6 +28,7 @@ fn node_rpc_addr(id: usize) -> String {
     let (host, port) = node_authority(id);
     format!("http://{}:{}", host, port)
 }
+
 pub struct SPReplica {
     replica_id: u64,
     server: Arc<StoreServer<RpcTransport>>,
@@ -139,8 +142,10 @@ impl SPReplica {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_database_connection() {
+    let logger = logger::create_logger();
     let cluster = make_cluster(2);
 
+    info!(logger, "---- Running test_database_connection test ----");
     tokio::task::spawn(async {
         let response = execute_query(1, String::from("SELECT 1"), Consistency::RelaxedReads).await;
         assert_eq!(response.len(), 1);
@@ -150,16 +155,19 @@ async fn test_database_connection() {
     .unwrap();
 
     for c in cluster {
+        info!(logger, "Replica {} halting", c.get_replica_id());
         c.halt_replica().await;
     }
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_consistency_relaxed() {
+    let logger = logger::create_logger();
     let cluster = make_cluster(3);
 
+    info!(logger, "---- Running test_consistency_relaxed test ----");
+    info!(logger, "Creating test_consistency table");
     let replica_one = tokio::task::spawn(async {
-        println!("---- CREATE TABLE ----");
         execute_query(
             1,
             String::from("CREATE TABLE IF NOT EXISTS test_consistency (i integer PRIMARY KEY);"),
@@ -167,7 +175,6 @@ async fn test_consistency_relaxed() {
         )
         .await;
 
-        println!("---- INSERT ----");
         execute_query(
             1,
             String::from("INSERT INTO test_consistency VALUES(50);"),
@@ -178,6 +185,7 @@ async fn test_consistency_relaxed() {
 
     replica_one.await.unwrap();
 
+    info!(logger, "Running SELECT on replicas");
     let res_one = execute_query(
         1,
         String::from("SELECT i FROM test_consistency;"),
@@ -185,7 +193,6 @@ async fn test_consistency_relaxed() {
     )
     .await;
 
-    println!("res_one -> {:?}", res_one);
     let res_two = execute_query(
         2,
         String::from("SELECT i FROM test_consistency;"),
@@ -193,7 +200,6 @@ async fn test_consistency_relaxed() {
     )
     .await;
 
-    println!("res_two -> {:?}", res_two);
     let res_three = execute_query(
         3,
         String::from("SELECT i FROM test_consistency;"),
@@ -201,23 +207,30 @@ async fn test_consistency_relaxed() {
     )
     .await;
 
-    println!("res_three -> {:?}", res_three);
+    assert!(res_one.len() == 1);
+    assert!(res_two.len() == 1 || res_two.len() == 0);
+    assert!(res_three.len() == 1 || res_three.len() == 0);
 
-    assert_eq!(res_one.len(), 1);
-    assert_eq!(res_two.len(), 1);
-    assert_eq!(res_three.len(), 1);
-    assert_eq!(res_one[0], res_two[0]);
-    assert_eq!(res_one[0], res_three[0]);
+    execute_query(
+        1,
+        String::from("DROP TABLE IF EXISTS test_consistency;"),
+        Consistency::RelaxedReads,
+    )
+    .await;
 
     for c in cluster {
-        println!("{} -> halting", c.get_replica_id());
+        info!(logger, "Replica {} halting", c.get_replica_id());
         c.halt_replica().await;
     }
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_consistency_strong() {
+    let logger = logger::create_logger();
     let cluster = make_cluster(3);
+
+    info!(logger, "---- Running test_consistency_strong test ----");
+    info!(logger, "Creating test_consistency table");
     let replica_one = tokio::task::spawn(async {
         execute_query(
             1,
@@ -239,21 +252,21 @@ async fn test_consistency_strong() {
     let res_one = execute_query(
         1,
         String::from("SELECT i FROM test_consistency"),
-        Consistency::RelaxedReads,
+        Consistency::Strong,
     )
     .await;
 
     let res_two = execute_query(
         2,
         String::from("SELECT i FROM test_consistency"),
-        Consistency::RelaxedReads,
+        Consistency::Strong,
     )
     .await;
 
     let res_three = execute_query(
         3,
         String::from("SELECT i FROM test_consistency"),
-        Consistency::RelaxedReads,
+        Consistency::Strong,
     )
     .await;
 
@@ -262,6 +275,13 @@ async fn test_consistency_strong() {
     assert_eq!(res_three.len(), 1);
     assert_eq!(res_one[0], res_two[0]);
     assert_eq!(res_one[0], res_three[0]);
+
+    execute_query(
+        1,
+        String::from("DROP TABLE IF EXISTS test_consistency;"),
+        Consistency::RelaxedReads,
+    )
+    .await;
 
     for c in cluster {
         c.halt_replica().await;
