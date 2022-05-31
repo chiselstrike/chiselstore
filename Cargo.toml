@@ -3,14 +3,12 @@ name = "chiselstore"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
+async-mutex = "1.4.0"
 async-notify = "0.2.0"
 async-trait = "0.1.52"
-async-mutex = "1.4.0"
-crossbeam-channel = "0.5.1"
 crossbeam = "0.8.1"
+crossbeam-channel = "0.5.1"
 derivative = "2.2.0"
 little_raft = "0.1.6"
 prost = "0.8.0"
