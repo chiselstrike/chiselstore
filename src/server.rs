@@ -10,7 +10,7 @@ use little_raft::{
     cluster::Cluster,
     message::Message,
     replica::{Replica, ReplicaID},
-    state_machine::{StateMachine, StateMachineTransition, TransitionState},
+    state_machine::{Snapshot, StateMachine, StateMachineTransition, TransitionState},
 };
 use sqlite::{Connection, OpenFlags};
 use std::collections::HashMap;
@@ -180,6 +180,22 @@ impl<T: StoreTransport + Send + Sync> StateMachine<StoreCommand> for Store<T> {
         self.pending_transitions = Vec::new();
         cur
     }
+
+    fn get_snapshot(&mut self) -> Option<Snapshot> {
+        todo!();
+    }
+
+    fn create_snapshot(
+        &mut self,
+        last_included_index: usize,
+        last_included_term: usize,
+    ) -> Snapshot {
+        todo!();
+    }
+
+    fn set_snapshot(&mut self, snapshot: Snapshot) {
+        todo!();
+    }
 }
 
 impl<T: StoreTransport + Send + Sync> Cluster<StoreCommand> for Store<T> {
@@ -213,7 +229,7 @@ impl<T: StoreTransport + Send + Sync> Cluster<StoreCommand> for Store<T> {
     }
 }
 
-type StoreReplica<T> = Replica<Store<T>, StoreCommand, Store<T>>;
+type StoreReplica<T> = Replica<Store<T>, Store<T>, StoreCommand>;
 
 /// ChiselStore server.
 #[derive(Derivative)]
@@ -265,11 +281,13 @@ impl<T: StoreTransport + Send + Sync> StoreServer<T> {
         };
         let (message_notifier_tx, message_notifier_rx) = channel::unbounded();
         let (transition_notifier_tx, transition_notifier_rx) = channel::unbounded();
+        let snapshot_delta = 100;
         let replica = Replica::new(
             this_id,
             peers,
             store.clone(),
             store.clone(),
+            snapshot_delta,
             noop,
             HEARTBEAT_TIMEOUT,
             (MIN_ELECTION_TIMEOUT, MAX_ELECTION_TIMEOUT),

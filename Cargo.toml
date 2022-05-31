@@ -10,7 +10,7 @@ async-trait = "0.1.52"
 crossbeam = "0.8.1"
 crossbeam-channel = "0.5.1"
 derivative = "2.2.0"
-little_raft = "0.1.6"
+little_raft = { git = "https://github.com/andreev-io/little-raft.git", branch = "ilya/snapshotting" }
 prost = "0.8.0"
 sqlite = "0.26.0"
 thiserror = "1.0.30"
