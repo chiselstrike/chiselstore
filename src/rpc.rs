@@ -4,6 +4,7 @@ use crate::rpc::proto::rpc_server::Rpc;
 use crate::{Consistency, StoreCommand, StoreServer, StoreTransport};
 use async_mutex::Mutex;
 use async_trait::async_trait;
+use bytes::Bytes;
 use crossbeam::queue::ArrayQueue;
 use derivative::Derivative;
 use little_raft::message::Message;
@@ -103,7 +104,7 @@ impl RpcTransport {
 
 #[async_trait]
 impl StoreTransport for RpcTransport {
-    fn send(&self, to_id: usize, msg: Message<StoreCommand>) {
+    fn send(&self, to_id: usize, msg: Message<StoreCommand, Bytes>) {
         match msg {
             Message::AppendEntryRequest {
                 from_id,
@@ -222,6 +223,12 @@ impl StoreTransport for RpcTransport {
                         client.respond_to_vote(response).await.unwrap();
                     }
                 });
+            }
+            Message::InstallSnapshotRequest { .. } => {
+                todo!("Snapshotting is not implemented.");
+            }
+            Message::InstallSnapshotResponse { .. } => {
+                todo!("Snapshotting is not implemented.");
             }
         }
     }

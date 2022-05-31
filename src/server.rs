@@ -3,6 +3,7 @@
 use crate::errors::StoreError;
 use async_notify::Notify;
 use async_trait::async_trait;
+use bytes::Bytes;
 use crossbeam_channel as channel;
 use crossbeam_channel::{Receiver, Sender};
 use derivative::Derivative;
@@ -10,7 +11,7 @@ use little_raft::{
     cluster::Cluster,
     message::Message,
     replica::{Replica, ReplicaID},
-    state_machine::{StateMachine, StateMachineTransition, TransitionState},
+    state_machine::{Snapshot, StateMachine, StateMachineTransition, TransitionState},
 };
 use sqlite::{Connection, OpenFlags};
 use std::collections::HashMap;
@@ -25,7 +26,7 @@ use std::time::Duration;
 #[async_trait]
 pub trait StoreTransport {
     /// Send a store command message `msg` to `to_id` node.
-    fn send(&self, to_id: usize, msg: Message<StoreCommand>);
+    fn send(&self, to_id: usize, msg: Message<StoreCommand, Bytes>);
 
     /// Delegate command to another node.
     async fn delegate(
@@ -83,7 +84,7 @@ struct Store<T: StoreTransport + Send + Sync> {
     leader_exists: AtomicBool,
     waiters: Vec<Arc<Notify>>,
     /// Pending messages
-    pending_messages: Vec<Message<StoreCommand>>,
+    pending_messages: Vec<Message<StoreCommand, Bytes>>,
     /// Transport layer.
     transport: Arc<T>,
     #[derivative(Debug = "ignore")]
@@ -155,7 +156,7 @@ fn query(conn: Arc<Mutex<Connection>>, sql: String) -> Result<QueryResults, Stor
     Ok(QueryResults { rows })
 }
 
-impl<T: StoreTransport + Send + Sync> StateMachine<StoreCommand> for Store<T> {
+impl<T: StoreTransport + Send + Sync> StateMachine<StoreCommand, Bytes> for Store<T> {
     fn register_transition_state(&mut self, transition_id: usize, state: TransitionState) {
         if state == TransitionState::Applied {
             if let Some(completion) = self.command_completions.remove(&(transition_id as u64)) {
@@ -180,9 +181,21 @@ impl<T: StoreTransport + Send + Sync> StateMachine<StoreCommand> for Store<T> {
         self.pending_transitions = Vec::new();
         cur
     }
+
+    fn get_snapshot(&mut self) -> Option<Snapshot<Bytes>> {
+        todo!("Snapshotting is not implemented.");
+    }
+
+    fn create_snapshot(&mut self, _index: usize, _term: usize) -> Snapshot<Bytes> {
+        todo!("Snapshotting is not implemented.");
+    }
+
+    fn set_snapshot(&mut self, _snapshot: Snapshot<Bytes>) {
+        todo!("Snapshotting is not implemented.");
+    }
 }
 
-impl<T: StoreTransport + Send + Sync> Cluster<StoreCommand> for Store<T> {
+impl<T: StoreTransport + Send + Sync> Cluster<StoreCommand, Bytes> for Store<T> {
     fn register_leader(&mut self, leader_id: Option<ReplicaID>) {
         if let Some(id) = leader_id {
             self.leader = Some(id);
@@ -198,11 +211,11 @@ impl<T: StoreTransport + Send + Sync> Cluster<StoreCommand> for Store<T> {
         }
     }
 
-    fn send_message(&mut self, to_id: usize, message: Message<StoreCommand>) {
+    fn send_message(&mut self, to_id: usize, message: Message<StoreCommand, Bytes>) {
         self.transport.send(to_id, message);
     }
 
-    fn receive_messages(&mut self) -> Vec<Message<StoreCommand>> {
+    fn receive_messages(&mut self) -> Vec<Message<StoreCommand, Bytes>> {
         let cur = self.pending_messages.clone();
         self.pending_messages = Vec::new();
         cur
@@ -213,7 +226,7 @@ impl<T: StoreTransport + Send + Sync> Cluster<StoreCommand> for Store<T> {
     }
 }
 
-type StoreReplica<T> = Replica<Store<T>, StoreCommand, Store<T>>;
+type StoreReplica<T> = Replica<Store<T>, Store<T>, StoreCommand, Bytes>;
 
 /// ChiselStore server.
 #[derive(Derivative)]
@@ -270,6 +283,7 @@ impl<T: StoreTransport + Send + Sync> StoreServer<T> {
             peers,
             store.clone(),
             store.clone(),
+            0, // snapshotting is disabled
             noop,
             HEARTBEAT_TIMEOUT,
             (MIN_ELECTION_TIMEOUT, MAX_ELECTION_TIMEOUT),
@@ -378,7 +392,7 @@ impl<T: StoreTransport + Send + Sync> StoreServer<T> {
     }
 
     /// Receive a message from the ChiselStore cluster.
-    pub fn recv_msg(&self, msg: little_raft::message::Message<StoreCommand>) {
+    pub fn recv_msg(&self, msg: little_raft::message::Message<StoreCommand, Bytes>) {
         let mut cluster = self.store.lock().unwrap();
         cluster.pending_messages.push(msg);
         self.message_notifier_tx.send(()).unwrap();
