@@ -25,7 +25,7 @@ For more information, check out the following [blog post](https://glaubercosta-1
 
 ## Getting Started
 
-See the [example server](examples) of how to use the ChiselStore library.
+See the [example server](core/examples) of how to use the ChiselStore library.
 
 ## License
 
