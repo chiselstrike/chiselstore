@@ -1,0 +1,13 @@
+[package]
+name = "sqlite"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "sqlite"
+crate-type = ["staticlib"] 
+
+[dependencies]
+chiselstore = { version = "0.1.0", path = "../core" }
+libc = "0.2.127"
+tonic = "0.5.2"
