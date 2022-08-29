@@ -48,11 +48,14 @@ impl ConnectionPool {
         })
     }
 
-    async fn connection<S: ToString>(&self, addr: S) -> RpcClient<tonic::transport::Channel> {
+    async fn connection<S: ToString>(
+        &self,
+        addr: S,
+    ) -> Result<RpcClient<tonic::transport::Channel>, tonic::transport::Error> {
         let addr = addr.to_string();
         match self.connections.pop() {
-            Some(x) => x,
-            None => RpcClient::connect(addr).await.unwrap(),
+            Some(x) => Ok(x),
+            None => RpcClient::connect(addr).await,
         }
     }
 
@@ -69,16 +72,25 @@ impl Connections {
         Self(Arc::new(Mutex::new(HashMap::new())))
     }
 
-    async fn connection<S: ToString>(&self, addr: S) -> Connection {
+    async fn connection<S: ToString>(
+        &self,
+        addr: S,
+    ) -> Result<Connection, tonic::transport::Error> {
         let mut conns = self.0.lock().await;
         let addr = addr.to_string();
         let pool = conns
             .entry(addr.clone())
             .or_insert_with(ConnectionPool::new);
-        Connection {
-            conn: pool.connection(addr).await,
+        Ok(Connection {
+            conn: pool.connection(addr).await?,
             pool: pool.clone(),
-        }
+        })
+    }
+
+    async fn invalidate<S: ToString>(&self, addr: S) {
+        let mut conns = self.0.lock().await;
+        let addr = addr.to_string();
+        conns.remove(&addr);
     }
 }
 
@@ -145,9 +157,12 @@ impl StoreTransport for RpcTransport {
                 let peer = (self.node_addr)(to_id);
                 let pool = self.connections.clone();
                 tokio::task::spawn(async move {
-                    let mut client = pool.connection(peer).await;
-                    let request = tonic::Request::new(request.clone());
-                    client.conn.append_entries(request).await.unwrap();
+                    if let Ok(mut client) = pool.connection(&peer).await {
+                        let request = tonic::Request::new(request.clone());
+                        if client.conn.append_entries(request).await.is_err() {
+                            pool.invalidate(peer).await
+                        }
+                    }
                 });
             }
             Message::AppendEntryResponse {
@@ -171,13 +186,17 @@ impl StoreTransport for RpcTransport {
                 let peer = (self.node_addr)(to_id);
                 let pool = self.connections.clone();
                 tokio::task::spawn(async move {
-                    let mut client = pool.connection(peer).await;
-                    let request = tonic::Request::new(request.clone());
-                    client
-                        .conn
-                        .respond_to_append_entries(request)
-                        .await
-                        .unwrap();
+                    if let Ok(mut client) = pool.connection(&peer).await {
+                        let request = tonic::Request::new(request.clone());
+                        if client
+                            .conn
+                            .respond_to_append_entries(request)
+                            .await
+                            .is_err()
+                        {
+                            pool.invalidate(peer).await
+                        }
+                    }
                 });
             }
             Message::VoteRequest {
@@ -199,9 +218,12 @@ impl StoreTransport for RpcTransport {
                 let peer = (self.node_addr)(to_id);
                 let pool = self.connections.clone();
                 tokio::task::spawn(async move {
-                    let mut client = pool.connection(peer).await;
-                    let vote = tonic::Request::new(request.clone());
-                    client.conn.vote(vote).await.unwrap();
+                    if let Ok(mut client) = pool.connection(&peer).await {
+                        let vote = tonic::Request::new(request.clone());
+                        if client.conn.vote(vote).await.is_err() {
+                            pool.invalidate(peer).await
+                        }
+                    }
                 });
             }
             Message::VoteResponse {
@@ -240,7 +262,7 @@ impl StoreTransport for RpcTransport {
         consistency: Consistency,
     ) -> Result<crate::server::QueryResults, crate::StoreError> {
         let addr = (self.node_addr)(to_id);
-        let mut client = self.connections.connection(addr.clone()).await;
+        let mut client = self.connections.connection(addr.clone()).await.unwrap();
         let query = tonic::Request::new(Query {
             sql,
             consistency: consistency as i32,
