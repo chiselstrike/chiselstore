@@ -186,7 +186,7 @@ impl<T: StoreTransport + Send + Sync> StateMachine<StoreCommand, Bytes> for Stor
     }
 
     fn get_snapshot(&mut self) -> Option<Snapshot<Bytes>> {
-        todo!("Snapshotting is not implemented.");
+        None
     }
 
     fn create_snapshot(&mut self, _index: usize, _term: usize) -> Snapshot<Bytes> {
