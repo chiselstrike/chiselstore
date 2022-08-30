@@ -13,6 +13,7 @@ use little_raft::{
     replica::{Replica, ReplicaID},
     state_machine::{Snapshot, StateMachine, StateMachineTransition, TransitionState},
 };
+use log::debug;
 use sqlite::{Connection, OpenFlags};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -158,6 +159,10 @@ fn query(conn: Arc<Mutex<Connection>>, sql: String) -> Result<QueryResults, Stor
 
 impl<T: StoreTransport + Send + Sync> StateMachine<StoreCommand, Bytes> for Store<T> {
     fn register_transition_state(&mut self, transition_id: usize, state: TransitionState) {
+        debug!(
+            "Registering transition state: {} -> {:?}",
+            transition_id, state
+        );
         match state {
             TransitionState::Applied | TransitionState::Abandoned(_) => {
                 if let Some(completion) = self.command_completions.remove(&(transition_id as u64)) {
@@ -201,9 +206,11 @@ impl<T: StoreTransport + Send + Sync> StateMachine<StoreCommand, Bytes> for Stor
 impl<T: StoreTransport + Send + Sync> Cluster<StoreCommand, Bytes> for Store<T> {
     fn register_leader(&mut self, leader_id: Option<ReplicaID>) {
         if let Some(id) = leader_id {
+            debug!("Registering {} as leader at node {}", id, self.this_id);
             self.leader = Some(id);
             self.leader_exists.store(true, Ordering::SeqCst);
         } else {
+            debug!("No leader leader at node {}", self.this_id);
             self.leader = None;
             self.leader_exists.store(false, Ordering::SeqCst);
         }
@@ -215,12 +222,17 @@ impl<T: StoreTransport + Send + Sync> Cluster<StoreCommand, Bytes> for Store<T> 
     }
 
     fn send_message(&mut self, to_id: usize, message: Message<StoreCommand, Bytes>) {
+        debug!(
+            "Node {} sending message to {} -> {:?}",
+            self.this_id, to_id, message
+        );
         self.transport.send(to_id, message);
     }
 
     fn receive_messages(&mut self) -> Vec<Message<StoreCommand, Bytes>> {
         let cur = self.pending_messages.clone();
         self.pending_messages = Vec::new();
+        debug!("Node {} received message(s) -> {:?}", self.this_id, cur);
         cur
     }
 

@@ -34,6 +34,7 @@ fn node_rpc_addr(id: usize) -> String {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    pretty_env_logger::init();
     let opt = Opt::from_args();
     let (host, port) = node_authority(opt.id);
     let rpc_listen_addr = format!("{}:{}", host, port).parse().unwrap();
