@@ -12,7 +12,7 @@ bytes = "1.1.0"
 crossbeam = "0.8.1"
 crossbeam-channel = "0.5.1"
 derivative = "2.2.0"
-little_raft = "0.2.0"
+little_raft = { git = "https://github.com/chiselstrike/little-raft.git", rev = "58e00c105c25b4aae54a10147ee06449b10fbd88" }
 log = "0.4.17"
 pretty_env_logger = "0.4.0"
 prost = "0.8.0"
