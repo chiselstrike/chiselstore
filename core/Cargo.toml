@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+anyhow = { version = "1.0.63", features = ["backtrace"] }
 async-mutex = "1.4.0"
 async-notify = "0.2.0"
 async-trait = "0.1.52"
@@ -24,5 +25,4 @@ tonic = "0.5.2"
 tonic-build = "0.5.2"
 
 [dev-dependencies]
-anyhow = { version = "1.0.45", features = ["backtrace"] }
 structopt = "0.3.25"

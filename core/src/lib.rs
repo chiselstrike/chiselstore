@@ -35,13 +35,8 @@
 //!  
 //! ```no_run
 //! use anyhow::Result;
-//! use chiselstore::rpc::proto::rpc_server::RpcServer;
-//! use chiselstore::{
-//!     rpc::{RpcService, RpcTransport},
-//!     StoreServer,
-//! };
+//! use chiselstore::{Config, Database};
 //! use std::sync::Arc;
-//! use tonic::transport::Server;
 //!
 //! /// Node authority (host and port) in the cluster.
 //! fn node_authority(id: usize) -> (&'static str, u16) {
@@ -50,40 +45,19 @@
 //!     (host, port)
 //! }
 //!
-//! /// Node RPC address in cluster.
-//! fn node_rpc_addr(id: usize) -> String {
-//!     let (host, port) = node_authority(id);
-//!     format!("http://{}:{}", host, port)
-//! }
-//!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
 //!     // The ID of this node:
 //!     let id = 1;
 //!     // A list of IDs of peer nodes:
 //!     let peers = vec![2, 3];
-//!     let (host, port) = node_authority(id);
-//!     let rpc_listen_addr = format!("{}:{}", host, port).parse().unwrap();
-//!     let transport = RpcTransport::new(Box::new(node_rpc_addr));
-//!     let server = StoreServer::start(id, peers, transport)?;
-//!     let server = Arc::new(server);
-//!     let f = {
-//!         let server = server.clone();
-//!         tokio::task::spawn(async move {
-//!             server.run();
-//!         })
+//!     let config = Config {
+//!         id: id,
+//!         peers: peers,
+//!         node_addr: Arc::new(node_authority),
 //!     };
-//!     let rpc = RpcService::new(server);
-//!     let g = tokio::task::spawn(async move {
-//!         println!("RPC listening to {} ...", rpc_listen_addr);
-//!         let ret = Server::builder()
-//!             .add_service(RpcServer::new(rpc))
-//!             .serve(rpc_listen_addr)
-//!             .await;
-//!         ret
-//!     });
-//!     let results = tokio::try_join!(f, g)?;
-//!     results.1?;
+//!     let db = Database::new(config);
+//!     db.run().await?;
 //!     Ok(())
 //! }
 //! ```
@@ -93,6 +67,7 @@
 
 #![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
 
+pub mod database;
 pub mod errors;
 pub mod rpc;
 pub mod server;
@@ -102,3 +77,5 @@ pub use server::Consistency;
 pub use server::StoreCommand;
 pub use server::StoreServer;
 pub use server::StoreTransport;
+
+pub use database::{Config, Database};

@@ -23,7 +23,8 @@ use proto::{
     VoteRequest, VoteResponse,
 };
 
-type NodeAddrFn = dyn Fn(usize) -> String + Send + Sync;
+/// Node address lookup function.
+pub type NodeAddrFn = dyn Fn(usize) -> (&'static str, u16) + Send + Sync;
 
 #[derive(Debug)]
 struct ConnectionPool {
@@ -100,17 +101,23 @@ impl Connections {
 pub struct RpcTransport {
     /// Node address mapping function.
     #[derivative(Debug = "ignore")]
-    node_addr: Box<NodeAddrFn>,
+    node_addr: Arc<NodeAddrFn>,
     connections: Connections,
 }
 
 impl RpcTransport {
     /// Creates a new RPC transport.
-    pub fn new(node_addr: Box<NodeAddrFn>) -> Self {
+    pub fn new(node_addr: Arc<NodeAddrFn>) -> Self {
         RpcTransport {
             node_addr,
             connections: Connections::new(),
         }
+    }
+
+    /// Node RPC address in cluster.
+    fn node_rpc_addr(&self, id: usize) -> String {
+        let (host, port) = (*self.node_addr)(id);
+        format!("http://{}:{}", host, port)
     }
 }
 
@@ -154,7 +161,7 @@ impl StoreTransport for RpcTransport {
                     entries,
                     commit_index,
                 };
-                let peer = (self.node_addr)(to_id);
+                let peer = self.node_rpc_addr(to_id);
                 let pool = self.connections.clone();
                 tokio::task::spawn(async move {
                     if let Ok(mut client) = pool.connection(&peer).await {
@@ -183,7 +190,7 @@ impl StoreTransport for RpcTransport {
                     last_index,
                     mismatch_index,
                 };
-                let peer = (self.node_addr)(to_id);
+                let peer = self.node_rpc_addr(to_id);
                 let pool = self.connections.clone();
                 tokio::task::spawn(async move {
                     if let Ok(mut client) = pool.connection(&peer).await {
@@ -215,7 +222,7 @@ impl StoreTransport for RpcTransport {
                     last_log_index,
                     last_log_term,
                 };
-                let peer = (self.node_addr)(to_id);
+                let peer = self.node_rpc_addr(to_id);
                 let pool = self.connections.clone();
                 tokio::task::spawn(async move {
                     if let Ok(mut client) = pool.connection(&peer).await {
@@ -231,7 +238,7 @@ impl StoreTransport for RpcTransport {
                 term,
                 vote_granted,
             } => {
-                let peer = (self.node_addr)(to_id);
+                let peer = self.node_rpc_addr(to_id);
                 tokio::task::spawn(async move {
                     let from_id = from_id as u64;
                     let term = term as u64;
@@ -261,7 +268,7 @@ impl StoreTransport for RpcTransport {
         sql: String,
         consistency: Consistency,
     ) -> Result<crate::server::QueryResults, crate::StoreError> {
-        let addr = (self.node_addr)(to_id);
+        let addr = self.node_rpc_addr(to_id);
         let mut client = self.connections.connection(addr.clone()).await.unwrap();
         let query = tonic::Request::new(Query {
             sql,

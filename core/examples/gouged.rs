@@ -1,12 +1,7 @@
 use anyhow::Result;
-use chiselstore::rpc::proto::rpc_server::RpcServer;
-use chiselstore::{
-    rpc::{RpcService, RpcTransport},
-    StoreServer,
-};
+use chiselstore::{Config, Database};
 use std::sync::Arc;
 use structopt::StructOpt;
-use tonic::transport::Server;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "gouged")]
@@ -26,37 +21,16 @@ fn node_authority(id: usize) -> (&'static str, u16) {
     (host, port)
 }
 
-/// Node RPC address in cluster.
-fn node_rpc_addr(id: usize) -> String {
-    let (host, port) = node_authority(id);
-    format!("http://{}:{}", host, port)
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     pretty_env_logger::init();
     let opt = Opt::from_args();
-    let (host, port) = node_authority(opt.id);
-    let rpc_listen_addr = format!("{}:{}", host, port).parse().unwrap();
-    let transport = RpcTransport::new(Box::new(node_rpc_addr));
-    let server = StoreServer::start(opt.id, opt.peers, transport)?;
-    let server = Arc::new(server);
-    let f = {
-        let server = server.clone();
-        tokio::task::spawn_blocking(move || {
-            server.run();
-        })
+    let config = Config {
+        id: opt.id,
+        peers: opt.peers,
+        node_addr: Arc::new(node_authority),
     };
-    let rpc = RpcService::new(server);
-    let g = tokio::task::spawn(async move {
-        println!("RPC listening to {} ...", rpc_listen_addr);
-        let ret = Server::builder()
-            .add_service(RpcServer::new(rpc))
-            .serve(rpc_listen_addr)
-            .await;
-        ret
-    });
-    let results = tokio::try_join!(f, g)?;
-    results.1?;
+    let db = Database::new(config);
+    db.run().await?;
     Ok(())
 }
